@@ -1,12 +1,12 @@
 //! 2D game-asset helpers: Tiled maps and atlas JSON (Aseprite / TexturePacker).
 use crate::{Frame, ImageData, Opts, Preview};
-use serde_json::Value;
+use crate::json::Value;
 use std::path::Path;
 
 fn read_json(path: &Path) -> Option<Value> {
     let md = std::fs::metadata(path).ok()?;
     if md.len() > 16 * 1024 * 1024 { return None; }
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    crate::json::parse(&std::fs::read(path).ok()?)
 }
 
 pub fn looks_like_sheet(path: &Path) -> bool {

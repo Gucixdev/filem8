@@ -5,6 +5,7 @@
 pub mod archive;
 #[cfg(feature = "audio")]
 pub mod audio;
+pub mod json;
 pub mod image_load;
 pub mod model;
 pub mod pdf;

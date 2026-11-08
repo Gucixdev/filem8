@@ -846,7 +846,6 @@ dependencies = [
  "gltf",
  "image",
  "resvg",
- "serde_json",
  "symphonia",
  "tar",
  "zip",
