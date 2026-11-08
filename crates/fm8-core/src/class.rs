@@ -134,3 +134,31 @@ pub fn mime_of(name: &str, is_dir: bool) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+
+/// MIME type from magic bytes (std-only, no shared-mime-info database).
+pub fn mime_sniff(h: &[u8]) -> Option<&'static str> {
+    let s = |m: &[u8]| h.starts_with(m);
+    let at = |o: usize, m: &[u8]| h.get(o..o + m.len()) == Some(m);
+    Some(if s(b"\x89PNG\r\n\x1a\n") { "image/png" } else if s(b"\xff\xd8\xff") { "image/jpeg" } else if s(b"GIF8") { "image/gif" }
+    else if s(b"BM") && h.len() > 14 { "image/bmp" } else if s(b"qoif") { "image/x-qoi" } else if s(b"II*\0") || s(b"MM\0*") { "image/tiff" }
+    else if s(b"RIFF") && at(8, b"WEBP") { "image/webp" } else if s(b"RIFF") && at(8, b"WAVE") { "audio/wav" } else if s(b"RIFF") && at(8, b"AVI ") { "video/x-msvideo" }
+    else if at(4, b"ftypavif") || at(4, b"ftypavis") { "image/avif" } else if at(4, b"ftypheic") || at(4, b"ftypmif1") { "image/heic" }
+    else if at(4, b"ftyp") { "video/mp4" } else if s(b"\x1aE\xdf\xa3") { "video/x-matroska" }
+    else if s(b"%PDF") { "application/pdf" } else if s(b"PK\x03\x04") { "application/zip" } else if s(b"\x1f\x8b") { "application/gzip" }
+    else if s(b"7z\xbc\xaf\x27\x1c") { "application/x-7z-compressed" } else if s(b"BZh") { "application/x-bzip2" } else if s(b"\xfd7zXZ\0") { "application/x-xz" }
+    else if s(b"\x28\xb5\x2f\xfd") { "application/zstd" } else if s(b"Rar!") { "application/vnd.rar" } else if at(257, b"ustar") { "application/x-tar" }
+    else if s(b"ID3") || (h.len() > 2 && h[0] == 0xff && h[1] & 0xe0 == 0xe0) { "audio/mpeg" } else if s(b"fLaC") { "audio/flac" } else if s(b"OggS") { "audio/ogg" }
+    else if s(b"glTF") { "model/gltf-binary" } else if s(b"\x7fELF") { "application/x-executable" } else if s(b"#!") { "application/x-shellscript" }
+    else if s(b"wOFF") { "font/woff" } else if s(b"wOF2") { "font/woff2" } else if s(b"\0\x01\0\0\0") || s(b"OTTO") { "font/ttf" }
+    else if s(b"SQLite format 3\0") { "application/vnd.sqlite3" } else if s(b"<?xml") || s(b"<svg") { if h.windows(4).take(512).any(|w| w == b"<svg") { "image/svg+xml" } else { "application/xml" } }
+    else { return None })
+}
+
+/// Best MIME: a specific extension wins, magic bytes decide for unknown/generic names,
+/// plain text as the last resort when the head is valid UTF-8.
+pub fn mime_for(name: &str, is_dir: bool, head: &[u8]) -> &'static str {
+    let by_ext = mime_of(name, is_dir);
+    if is_dir || by_ext != "application/octet-stream" { return by_ext }
+    if let Some(m) = mime_sniff(head) { return m }
+    if !head.is_empty() && !head.contains(&0) && std::str::from_utf8(head).is_ok() { "text/plain" } else { by_ext }
+}

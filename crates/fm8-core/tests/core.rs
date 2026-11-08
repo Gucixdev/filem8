@@ -300,3 +300,16 @@ fn trashbin_spec_layout_and_restore() {
     assert_eq!(decode(&encode("é /x")), "é /x");
     std::fs::remove_dir_all(&d).ok();
 }
+
+#[test]
+fn mime_by_extension_then_magic() {
+    use fm8_core::class::*;
+    assert_eq!(mime_for("a.png", false, b""), "image/png");
+    assert_eq!(mime_for("noext", false, b"\x89PNG\r\n\x1a\nxxxx"), "image/png");
+    assert_eq!(mime_for("noext", false, b"%PDF-1.7"), "application/pdf");
+    assert_eq!(mime_for("noext", false, b"just text\n"), "text/plain");
+    assert_eq!(mime_for("noext", false, &[0, 1, 2, 3]), "application/octet-stream");
+    assert_eq!(mime_for("d", true, b""), "inode/directory");
+    assert_eq!(mime_sniff(b"\0\0\0\x18ftypmp42"), Some("video/mp4"));
+    assert_eq!(mime_sniff(b"<?xml version='1.0'?><svg xmlns='x'/>"), Some("image/svg+xml"));
+}
