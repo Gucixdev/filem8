@@ -5,5 +5,4 @@ edition.workspace = true
 
 [dependencies]
 notify = "8"
-trash = "5"
 libc = "0.2"

@@ -273,3 +273,30 @@ fn prefs_roundtrip_and_defaults() {
     assert!(!q.map.contains_key("view"));
     assert_eq!(q.get("key.new_tab"), "ctrl+t");
 }
+
+#[test]
+fn trashbin_spec_layout_and_restore() {
+    use fm8_core::trashbin::*;
+    let d = std::env::temp_dir().join(format!("fm8-tb-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("src/sub")).unwrap();
+    std::fs::write(d.join("src/a b%.txt"), "x").unwrap();
+    std::fs::write(d.join("src/sub/f"), "yy").unwrap();
+    let t = d.join("Trash");
+    let i1 = trash_in(&d.join("src/a b%.txt"), &t, None).unwrap();
+    std::fs::write(d.join("src/a b%.txt"), "again").unwrap();
+    let i2 = trash_in(&d.join("src/a b%.txt"), &t, None).unwrap();
+    assert_ne!(i1.trashed, i2.trashed);
+    trash_in(&d.join("src/sub"), &t, None).unwrap();
+    let info = std::fs::read_to_string(&i1.info).unwrap();
+    assert!(info.contains("[Trash Info]") && info.contains("a%20b%25.txt"));
+    assert!(std::fs::read_to_string(t.join("directorysizes")).unwrap().contains("sub"));
+    let items = list_in(&t, None);
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().any(|i| i.original == d.join("src/a b%.txt")));
+    restore(&i1).unwrap();
+    assert_eq!(std::fs::read_to_string(d.join("src/a b%.txt")).unwrap(), "x");
+    assert!(restore(&i2).is_err()); // original path occupied
+    assert_eq!(decode(&encode("é /x")), "é /x");
+    std::fs::remove_dir_all(&d).ok();
+}

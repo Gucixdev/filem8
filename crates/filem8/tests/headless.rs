@@ -36,11 +36,14 @@ fn navigate_tabs_keyboard_and_golden() {
     frame(&mut app, &mut ui, 0.1, &click(300.0, 129.0));
     frame(&mut app, &mut ui, 0.2, &[Event::MouseUp(Button::Left)]);
     assert_eq!(app.tabs[0].model.selection(), vec![d.join("alpha")]);
+    frame(&mut app, &mut ui, 0.25, &[]);
     frame(&mut app, &mut ui, 0.3, &[Event::Key(Key::Enter, Mods::default())]);
+    frame(&mut app, &mut ui, 0.31, &[]);
     settle(&mut app);
     assert_eq!(app.tabs[0].model.dir, std::fs::canonicalize(d.join("alpha")).unwrap());
     // Backspace goes back
     frame(&mut app, &mut ui, 0.4, &[Event::Key(Key::Backspace, Mods::default())]);
+    frame(&mut app, &mut ui, 0.41, &[]);
     settle(&mut app);
     assert_eq!(app.tabs[0].model.dir, std::fs::canonicalize(&d).unwrap());
     // arrows move the cursor

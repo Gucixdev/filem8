@@ -171,7 +171,7 @@ pub fn move_to(sources: &[PathBuf], dest_dir: &Path) -> Result<Op, String> {
 }
 
 pub fn trash(paths: &[PathBuf]) -> Result<Op, String> {
-    ::trash::delete_all(paths).map_err(|e| e.to_string())?;
+    for p in paths { crate::trashbin::trash(p)?; }
     Ok(Op::Trash { originals: paths.to_vec() })
 }
 
@@ -181,16 +181,8 @@ pub fn remove_permanent(p: &Path) -> io::Result<()> {
 }
 
 fn restore(originals: &[PathBuf]) -> Result<(), String> {
-    use ::trash::os_limited;
-    let items = os_limited::list().map_err(|e| e.to_string())?;
-    // newest deletion first for each original path
-    let mut pick: Vec<::trash::TrashItem> = vec![];
-    for o in originals {
-        let mut c: Vec<&::trash::TrashItem> = items.iter().filter(|i| i.original_path() == *o).collect();
-        c.sort_by_key(|i| std::cmp::Reverse(i.time_deleted));
-        pick.push((*c.first().ok_or_else(|| format!("{} not found in trash", o.display()))?).clone());
-    }
-    os_limited::restore_all(pick).map_err(|e| e.to_string())
+    for o in originals { crate::trashbin::restore_path(o)?; }
+    Ok(())
 }
 
 /// Re-apply (used by redo). Returns the op as actually applied.
