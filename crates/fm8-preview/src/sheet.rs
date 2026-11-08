@@ -46,10 +46,10 @@ pub fn load(path: &Path, o: &Opts) -> Preview {
         // now downscale for display
         let (w, h) = (fr.w, fr.h);
         if w.max(h) > o.max_dim {
-            let img = image::RgbaImage::from_raw(w, h, std::mem::take(&mut fr.rgba)).unwrap();
-            let s = o.max_dim as f32 / w.max(h) as f32;
-            let r = image::imageops::resize(&img, (w as f32 * s) as u32, (h as f32 * s) as u32, image::imageops::FilterType::Nearest);
-            *fr = Frame { w: r.width(), h: r.height(), rgba: r.into_raw(), delay_ms: 0 };
+            let img = fm8_codec::Image { w, h, rgba: std::mem::take(&mut fr.rgba) };
+            let (nw, nh) = fm8_codec::resize::fit(w, h, o.max_dim);
+            let r = fm8_codec::resize::resize(&img, nw, nh, true);
+            *fr = Frame { w: r.w, h: r.h, rgba: r.rgba, delay_ms: 0 };
         }
         d.format = format!("Atlas, {} frames", frames.len());
         return Preview::Image(d);

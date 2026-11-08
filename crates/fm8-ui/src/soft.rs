@@ -221,24 +221,13 @@ impl Framebuffer {
     }
 
     pub fn save_png(&self, path: &std::path::Path) -> Result<(), String> {
-        let f = std::fs::File::create(path).map_err(|e| e.to_string())?;
-        let mut enc = png::Encoder::new(std::io::BufWriter::new(f), self.w, self.h);
-        enc.set_color(png::ColorType::Rgba);
-        enc.set_depth(png::BitDepth::Eight);
-        let mut w = enc.write_header().map_err(|e| e.to_string())?;
-        w.write_image_data(&self.px).map_err(|e| e.to_string())
+        let img = fm8_codec::Image { w: self.w, h: self.h, rgba: self.px.clone() };
+        std::fs::write(path, fm8_codec::png::encode(&img)).map_err(|e| e.to_string())
     }
 
     pub fn load_png(path: &std::path::Path) -> Result<Framebuffer, String> {
-        let dec = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).map_err(|e| e.to_string())?));
-        let mut r = dec.read_info().map_err(|e| e.to_string())?;
-        let mut buf = vec![0; r.output_buffer_size().ok_or("size")?];
-        let info = r.next_frame(&mut buf).map_err(|e| e.to_string())?;
-        if info.color_type != png::ColorType::Rgba {
-            return Err("golden must be RGBA".into());
-        }
-        buf.truncate(info.buffer_size());
-        Ok(Framebuffer { w: info.width, h: info.height, px: buf })
+        let img = fm8_codec::png::decode(&std::fs::read(path).map_err(|e| e.to_string())?)?;
+        Ok(Framebuffer { w: img.w, h: img.h, px: img.rgba })
     }
 
     /// Count of pixels differing by more than `tol` in any channel.

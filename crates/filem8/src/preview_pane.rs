@@ -155,7 +155,8 @@ impl PreviewPane {
                 let (wave, ctl) = area.cut_top((area.h - 44.0).max(60.0));
                 let mid = wave.y + wave.h / 2.0;
                 let bw = wave.w / peaks.len().max(1) as f32;
-                let pos_frac = 0.0f64;
+                #[allow(unused_mut)]
+                let mut pos_frac = 0.0f64;
                 #[cfg(feature = "full")]
                 if let Some((_, pl)) = &self.player { pos_frac = pl.position_s() / duration.max(0.001); }
                 for (i, p) in peaks.iter().enumerate() {

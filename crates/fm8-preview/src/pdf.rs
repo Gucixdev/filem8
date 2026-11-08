@@ -17,13 +17,12 @@ pub fn load(path: &Path, o: &Opts) -> Preview {
         .arg("-")
         .output();
     match out {
-        Ok(r) if r.status.success() && !r.stdout.is_empty() => match image::load_from_memory(&r.stdout) {
+        Ok(r) if r.status.success() && !r.stdout.is_empty() => match fm8_codec::png::decode(&r.stdout) {
             Ok(img) => {
-                let rgba = img.to_rgba8();
-                let (w, h) = (rgba.width(), rgba.height());
-                Preview::Image(crate::ImageData { frames: vec![crate::Frame { w, h, rgba: rgba.into_raw(), delay_ms: 0 }], orig_w: w, orig_h: h, format: "PDF p.1".into() })
+                let (w, h) = (img.w, img.h);
+                Preview::Image(crate::ImageData { frames: vec![crate::Frame { w, h, rgba: img.rgba, delay_ms: 0 }], orig_w: w, orig_h: h, format: "PDF p.1".into() })
             }
-            Err(e) => Preview::Error(e.to_string()),
+            Err(e) => Preview::Error(e),
         },
         Ok(r) => Preview::Error(String::from_utf8_lossy(&r.stderr).lines().next().unwrap_or("pdftoppm failed").to_string()),
         Err(e) => Preview::Error(e.to_string()),

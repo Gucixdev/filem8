@@ -19,7 +19,7 @@ full = ["fm8-preview/full"]
 [dependencies]
 fm8-ui = { path = "../fm8-ui" }
 fm8-core = { path = "../fm8-core" }
-fm8-preview = { path = "../fm8-preview", default-features = false, features = ["avif"] }
+fm8-preview = { path = "../fm8-preview", default-features = false }
 winit = "0.30"
 wgpu = "27"
 pollster = "0.4"

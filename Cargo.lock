@@ -829,6 +829,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
+name = "fm8-codec"
+version = "0.1.0"
+dependencies = [
+ "image",
+]
+
+[[package]]
 name = "fm8-core"
 version = "0.1.0"
 dependencies = [
@@ -842,6 +849,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "flate2",
+ "fm8-codec",
  "fm8-core",
  "gltf",
  "image",
@@ -857,7 +865,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "bytemuck",
- "png 0.18.1",
+ "fm8-codec",
 ]
 
 [[package]]

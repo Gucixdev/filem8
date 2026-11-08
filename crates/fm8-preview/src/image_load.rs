@@ -1,20 +1,10 @@
 use crate::{Frame, ImageData, Opts, Preview};
-use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat};
-use std::io::BufReader;
 use std::path::Path;
 
-fn fit(w: u32, h: u32, max: u32) -> (u32, u32) {
-    if w <= max && h <= max { return (w, h); }
-    let s = max as f32 / w.max(h) as f32;
-    (((w as f32 * s).round() as u32).max(1), ((h as f32 * s).round() as u32).max(1))
-}
-
-fn downscale(img: DynamicImage, max: u32) -> (u32, u32, Vec<u8>) {
-    let (w, h) = (img.width(), img.height());
-    let (nw, nh) = fit(w, h, max);
-    let img = if (nw, nh) != (w, h) { img.resize_exact(nw, nh, image::imageops::FilterType::Triangle) } else { img };
-    let rgba = img.to_rgba8();
-    (rgba.width(), rgba.height(), rgba.into_raw())
+fn downscale(img: fm8_codec::Image, max: u32) -> (u32, u32, Vec<u8>) {
+    let (nw, nh) = fm8_codec::resize::fit(img.w, img.h, max);
+    let img = fm8_codec::resize::resize(&img, nw, nh, false);
+    (img.w, img.h, img.rgba)
 }
 
 pub fn load(path: &Path, o: &Opts) -> Preview {
@@ -30,52 +20,62 @@ pub fn load(path: &Path, o: &Opts) -> Preview {
 }
 
 pub fn decode(path: &Path, o: &Opts) -> Result<ImageData, String> {
-    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let reader = image::ImageReader::new(BufReader::new(f)).with_guessed_format().map_err(|e| e.to_string())?;
-    let fmt = reader.format();
-    let fmt_name = fmt.map(|f| format!("{f:?}").to_uppercase()).unwrap_or_else(|| "?".into());
-    // animated formats first
-    if matches!(fmt, Some(ImageFormat::Gif) | Some(ImageFormat::WebP)) {
-        let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        let br = BufReader::new(f);
-        let frames_res: Result<(Vec<image::Frame>, u32, u32), String> = match fmt {
-            Some(ImageFormat::Gif) => {
-                let d = image::codecs::gif::GifDecoder::new(br).map_err(|e| e.to_string())?;
-                let (w, h) = d.dimensions();
-                let mut v = vec![];
-                for fr in d.into_frames().take(o.max_frames) { v.push(fr.map_err(|e| e.to_string())?); }
-                Ok((v, w, h))
-            }
-            _ => {
-                let d = image::codecs::webp::WebPDecoder::new(br).map_err(|e| e.to_string())?;
-                let (w, h) = d.dimensions();
-                if d.has_animation() {
-                    let mut v = vec![];
-                    for fr in d.into_frames().take(o.max_frames) { v.push(fr.map_err(|e| e.to_string())?); }
-                    Ok((v, w, h))
-                } else {
-                    Ok((vec![], w, h))
-                }
-            }
-        };
-        let (frames, w, h) = frames_res?;
-        if !frames.is_empty() {
-            let out: Vec<Frame> = frames
-                .into_iter()
-                .map(|fr| {
-                    let (n, d) = fr.delay().numer_denom_ms();
-                    let delay = if d == 0 { 100 } else { (n / d).max(20) };
-                    let (fw, fh, rgba) = downscale(DynamicImage::ImageRgba8(fr.into_buffer()), o.max_dim);
-                    Frame { w: fw, h: fh, rgba, delay_ms: delay }
-                })
-                .collect();
-            return Ok(ImageData { frames: out, orig_w: w, orig_h: h, format: fmt_name });
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let ext = fm8_core::class::ext_of(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    match fm8_codec::sniff(&bytes, &ext) {
+        Some(fm8_codec::Format::Gif) => {
+            let frames = fm8_codec::gif::decode(&bytes, o.max_frames.max(1))?;
+            let (ow, oh) = (frames[0].img.w, frames[0].img.h);
+            let out = frames.into_iter().map(|f| { let (w, h, rgba) = downscale(f.img, o.max_dim); Frame { w, h, rgba, delay_ms: f.delay_ms } }).collect();
+            Ok(ImageData { frames: out, orig_w: ow, orig_h: oh, format: "GIF".into() })
         }
+        Some(fmt) => match fm8_codec::decode(&bytes, &ext) {
+            Ok((_, img)) => {
+                let (ow, oh) = (img.w, img.h);
+                let (w, h, rgba) = downscale(img, o.max_dim);
+                Ok(ImageData { frames: vec![Frame { w, h, rgba, delay_ms: 0 }], orig_w: ow, orig_h: oh, format: fmt.name().into() })
+            }
+            #[cfg(feature = "extra-codecs")]
+            Err(_) => extra::decode(&bytes, o),
+            #[cfg(not(feature = "extra-codecs"))]
+            Err(e) => Err(e),
+        },
+        #[cfg(feature = "extra-codecs")]
+        None => extra::decode(&bytes, o),
+        #[cfg(not(feature = "extra-codecs"))]
+        None => Err("unsupported image format".into()),
     }
-    let img = reader.decode().map_err(|e| e.to_string())?;
-    let (ow, oh) = (img.width(), img.height());
-    let (w, h, rgba) = downscale(img, o.max_dim);
-    Ok(ImageData { frames: vec![Frame { w, h, rgba, delay_ms: 0 }], orig_w: ow, orig_h: oh, format: fmt_name })
+}
+
+/// WebP, AVIF and progressive JPEG still go through the `image` crate (feature `extra-codecs`).
+#[cfg(feature = "extra-codecs")]
+mod extra {
+    use super::*;
+    use image::{AnimationDecoder, ImageDecoder};
+    pub fn decode(bytes: &[u8], o: &Opts) -> Result<ImageData, String> {
+        let fmt = image::guess_format(bytes).map_err(|e| e.to_string())?;
+        let name = format!("{fmt:?}").to_uppercase();
+        if fmt == image::ImageFormat::WebP {
+            let d = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+            let (w, h) = d.dimensions();
+            if d.has_animation() {
+                let mut out = vec![];
+                for fr in d.into_frames().take(o.max_frames) {
+                    let fr = fr.map_err(|e| e.to_string())?;
+                    let (n, dd) = fr.delay().numer_denom_ms();
+                    let delay = if dd == 0 { 100 } else { (n / dd).max(20) };
+                    let b = fr.into_buffer();
+                    let (fw, fh, rgba) = downscale(fm8_codec::Image { w: b.width(), h: b.height(), rgba: b.into_raw() }, o.max_dim);
+                    out.push(Frame { w: fw, h: fh, rgba, delay_ms: delay });
+                }
+                return Ok(ImageData { frames: out, orig_w: w, orig_h: h, format: name });
+            }
+        }
+        let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?.to_rgba8();
+        let (ow, oh) = (img.width(), img.height());
+        let (w, h, rgba) = downscale(fm8_codec::Image { w: ow, h: oh, rgba: img.into_raw() }, o.max_dim);
+        Ok(ImageData { frames: vec![Frame { w, h, rgba, delay_ms: 0 }], orig_w: ow, orig_h: oh, format: name })
+    }
 }
 
 #[cfg(feature = "svg")]
