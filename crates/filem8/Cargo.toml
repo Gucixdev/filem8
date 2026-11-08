@@ -11,9 +11,15 @@ path = "src/lib.rs"
 name = "filem8"
 path = "src/main.rs"
 
+[features]
+# Light build: window, images (incl. AVIF), text/code, OBJ/STL. `full` adds SVG, audio waveform + playback, glTF, archives.
+default = []
+full = ["fm8-preview/full"]
+
 [dependencies]
 fm8-ui = { path = "../fm8-ui" }
 fm8-core = { path = "../fm8-core" }
+fm8-preview = { path = "../fm8-preview", default-features = false, features = ["avif"] }
 winit = "0.30"
 wgpu = "27"
 pollster = "0.4"

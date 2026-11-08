@@ -44,7 +44,7 @@ struct V { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
 
 impl Gpu {
     fn new(window: Arc<Window>) -> Result<Gpu, String> {
-        let want = std::env::var("FM8_BACKEND").unwrap_or_else(|_| "auto".into());
+        let want = backend_pref();
         let backends = match want.as_str() { "vulkan" => wgpu::Backends::VULKAN, "gl" => wgpu::Backends::GL, _ => wgpu::Backends::VULKAN | wgpu::Backends::GL };
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends, ..Default::default() });
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
@@ -135,8 +135,10 @@ impl Shell {
         let scale = self.scale();
         let Some(win) = self.win.as_mut() else { return };
         // live theme reload (colorado writes the file)
+        if let Some(t) = self.app.theme_request.take() { self.ui.theme = t; }
+        let file_theme = self.app.prefs.get("theme") == "file";
         let mt = std::fs::metadata(&self.theme_file).and_then(|m| m.modified()).ok();
-        if mt != self.theme_mtime {
+        if mt != self.theme_mtime && file_theme {
             self.theme_mtime = mt;
             self.ui.theme = load_theme(&self.theme_file);
         }
@@ -177,7 +179,7 @@ impl ApplicationHandler for Shell {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.win.is_some() { return; }
         let window = Arc::new(el.create_window(Window::default_attributes().with_title("filem8").with_inner_size(LogicalSize::new(1100.0, 700.0)).with_min_inner_size(LogicalSize::new(560.0, 360.0))).expect("window"));
-        let force_soft = std::env::var("FM8_BACKEND").map(|v| v == "soft").unwrap_or(false);
+        let force_soft = backend_pref() == "soft";
         let presenter = if force_soft { None } else { match Gpu::new(window.clone()) { Ok(g) => { eprintln!("filem8: wgpu on {}", g.name); Some(Presenter::Gpu(g)) } Err(e) => { eprintln!("filem8: wgpu unavailable ({e}); using CPU surface"); None } } };
         let presenter = presenter.unwrap_or_else(|| {
             let ctx = softbuffer::Context::new(window.clone()).expect("softbuffer context");
@@ -244,6 +246,11 @@ impl ApplicationHandler for Shell {
 
 impl Shell {
     fn wake(&self) { if let Some(w) = &self.win { w.window.request_redraw(); } }
+}
+
+/// FM8_BACKEND wins; otherwise the `backend` setting (auto|vulkan|gl|soft).
+fn backend_pref() -> String {
+    std::env::var("FM8_BACKEND").unwrap_or_else(|_| fm8_core::settings::Prefs::load(&fm8_core::settings::config_dir().join("settings")).get("backend"))
 }
 
 fn parse_size(s: &str) -> (u32, u32) {

@@ -109,3 +109,28 @@ pub fn class_label(c: Class) -> &'static str {
         Class::Other => "File",
     }
 }
+
+/// MIME type guessed from the extension (small table; "application/octet-stream" otherwise).
+pub fn mime_of(name: &str, is_dir: bool) -> &'static str {
+    if is_dir { return "inode/directory"; }
+    match ext_of(name).as_str() {
+        "png" => "image/png", "jpg" | "jpeg" | "jpe" | "jfif" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp",
+        "avif" => "image/avif", "bmp" => "image/bmp", "svg" => "image/svg+xml", "ico" => "image/x-icon", "tif" | "tiff" => "image/tiff",
+        "heic" | "heif" => "image/heic", "jxl" => "image/jxl", "qoi" => "image/x-qoi",
+        "mp3" => "audio/mpeg", "flac" => "audio/flac", "ogg" | "oga" | "opus" => "audio/ogg", "wav" => "audio/wav",
+        "m4a" | "aac" => "audio/mp4", "mid" | "midi" => "audio/midi",
+        "mp4" | "m4v" => "video/mp4", "mkv" => "video/x-matroska", "webm" => "video/webm", "avi" => "video/x-msvideo", "mov" => "video/quicktime",
+        "txt" | "log" => "text/plain", "md" | "markdown" => "text/markdown", "html" | "htm" => "text/html", "css" => "text/css",
+        "csv" => "text/csv", "json" => "application/json", "xml" => "application/xml", "toml" => "application/toml",
+        "yaml" | "yml" => "application/yaml", "js" | "mjs" => "text/javascript", "rs" => "text/x-rust", "c" | "h" => "text/x-c",
+        "cpp" | "cc" | "hpp" => "text/x-c++", "py" => "text/x-python", "sh" | "bash" => "application/x-shellscript",
+        "pdf" => "application/pdf", "zip" => "application/zip", "gz" | "tgz" => "application/gzip", "tar" => "application/x-tar",
+        "xz" => "application/x-xz", "zst" => "application/zstd", "7z" => "application/x-7z-compressed", "rar" => "application/vnd.rar",
+        "bz2" => "application/x-bzip2", "iso" => "application/x-iso9660-image",
+        "gltf" => "model/gltf+json", "glb" => "model/gltf-binary", "obj" => "model/obj", "stl" => "model/stl",
+        "ttf" => "font/ttf", "otf" => "font/otf", "woff" => "font/woff", "woff2" => "font/woff2",
+        "doc" | "docx" => "application/msword", "odt" => "application/vnd.oasis.opendocument.text",
+        "xls" | "xlsx" => "application/vnd.ms-excel", "epub" => "application/epub+zip",
+        _ => "application/octet-stream",
+    }
+}

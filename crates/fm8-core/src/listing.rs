@@ -17,11 +17,14 @@ pub struct Entry {
     pub hidden: bool,
     pub class: Class,
     pub mode: u32,
+    pub uid: u32,
+    /// Direct children for directories (0 for files).
+    pub items: u32,
 }
 
 impl Entry {
     pub fn from_path(path: &Path) -> std::io::Result<Entry> {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let lm = std::fs::symlink_metadata(path)?;
         let is_symlink = lm.file_type().is_symlink();
         let m = if is_symlink { std::fs::metadata(path).unwrap_or(lm) } else { lm };
@@ -37,6 +40,8 @@ impl Entry {
             size: if is_dir { 0 } else { m.len() },
             modified: m.modified().ok(),
             mode: m.permissions().mode(),
+            uid: m.uid(),
+            items: if is_dir { std::fs::read_dir(path).map(|r| r.count() as u32).unwrap_or(0) } else { 0 },
         })
     }
 }
@@ -67,7 +72,7 @@ pub fn spawn(dir: PathBuf) -> Receiver<Msg> {
             } else {
                 // broken symlink etc: still show it
                 let name = de.file_name().to_string_lossy().into_owned();
-                chunk.push(Entry { hidden: name.starts_with('.'), class: Class::Other, name, path: de.path(), is_dir: false, is_symlink: true, size: 0, modified: None, mode: 0 });
+                chunk.push(Entry { hidden: name.starts_with('.'), class: Class::Other, name, path: de.path(), is_dir: false, is_symlink: true, uid: 0, items: 0, size: 0, modified: None, mode: 0 });
             }
             if chunk.len() >= 512 && tx.send(Msg::Chunk(std::mem::take(&mut chunk))).is_err() {
                 return;
@@ -100,6 +105,9 @@ pub enum SortKey {
     Size,
     Modified,
     Type,
+    Perms,
+    Owner,
+    Items,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,6 +158,9 @@ pub fn compare(a: &Entry, b: &Entry, s: Sort) -> Ordering {
         SortKey::Name => natural_cmp(&a.name, &b.name),
         SortKey::Size => a.size.cmp(&b.size).then_with(|| natural_cmp(&a.name, &b.name)),
         SortKey::Modified => a.modified.cmp(&b.modified).then_with(|| natural_cmp(&a.name, &b.name)),
+        SortKey::Perms => (a.mode & 0o7777).cmp(&(b.mode & 0o7777)).then_with(|| natural_cmp(&a.name, &b.name)),
+        SortKey::Owner => a.uid.cmp(&b.uid).then_with(|| natural_cmp(&a.name, &b.name)),
+        SortKey::Items => a.items.cmp(&b.items).then_with(|| natural_cmp(&a.name, &b.name)),
         SortKey::Type => a.class.cmp(&b.class).then_with(|| crate::class::ext_of(&a.name).cmp(&crate::class::ext_of(&b.name))).then_with(|| natural_cmp(&a.name, &b.name)),
     };
     if s.ascending { o } else { o.reverse() }

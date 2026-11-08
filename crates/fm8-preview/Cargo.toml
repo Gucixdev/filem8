@@ -4,18 +4,23 @@ version = "0.1.0"
 edition.workspace = true
 
 [features]
-default = ["avif", "audio-play"]
+default = ["full"]
+full = ["avif", "svg", "audio", "audio-play", "model-gltf", "archive"]
 avif = ["image/avif-native"]
-audio-play = ["dep:cpal"]
+svg = ["dep:resvg"]
+audio = ["dep:symphonia"]
+audio-play = ["audio", "dep:cpal"]
+model-gltf = ["dep:gltf"]
+archive = ["dep:zip", "dep:tar", "dep:flate2"]
 
 [dependencies]
 fm8-core = { path = "../fm8-core" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "tga", "qoi", "pnm", "hdr"] }
-resvg = { version = "0.45", default-features = false }
-zip = { version = "2", default-features = false, features = ["deflate"] }
-tar = "0.4"
-flate2 = "1"
+resvg = { version = "0.45", default-features = false, optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+tar = { version = "0.4", optional = true }
+flate2 = { version = "1", optional = true }
 serde_json = "1"
-symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm", "aac", "isomp4", "alac", "mkv"] }
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm", "aac", "isomp4", "alac", "mkv"], optional = true }
 cpal = { version = "0.15", optional = true }
-gltf = { version = "1", default-features = false, features = ["import", "utils"] }
+gltf = { version = "1", default-features = false, features = ["import", "utils"], optional = true }

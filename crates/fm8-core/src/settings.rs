@@ -67,3 +67,67 @@ impl FolderMemory {
 pub fn config_dir() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| crate::paths::home().join(".config")).join("filem8")
 }
+
+/// Application preferences: flat `key = value` text file (`~/.config/filem8/settings`).
+/// Unknown keys are kept; missing keys fall back to `DEFAULTS`, so the file can
+/// stay tiny and survive version changes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Prefs {
+    pub map: BTreeMap<String, String>,
+}
+
+pub const DEFAULTS: &[(&str, &str)] = &[
+    ("view", "list"),
+    ("show_hidden", "false"),
+    ("sort", "name"),
+    ("sort_ascending", "true"),
+    ("thumb_size", "medium"),
+    ("thumbnails", "true"),
+    ("preview", "true"),
+    ("confirm_trash", "false"),
+    ("backend", "auto"),
+    ("theme", "file"),
+    ("key.new_tab", "ctrl+t"),
+    ("key.close_tab", "ctrl+w"),
+    ("key.path", "ctrl+l"),
+    ("key.hidden", "ctrl+h"),
+    ("key.layout", "f3"),
+    ("key.rename", "f2"),
+    ("key.copy", "ctrl+c"),
+    ("key.cut", "ctrl+x"),
+    ("key.paste", "ctrl+v"),
+    ("key.bookmark", "ctrl+d"),
+    ("key.settings", "ctrl+,"),
+    ("key.reload", "ctrl+r"),
+];
+
+impl Prefs {
+    pub fn parse(text: &str) -> Prefs {
+        let mut map = BTreeMap::new();
+        for l in text.lines() {
+            let l = l.trim();
+            if l.is_empty() || l.starts_with('#') { continue; }
+            if let Some((k, v)) = l.split_once('=') { map.insert(k.trim().to_string(), v.trim().to_string()); }
+        }
+        Prefs { map }
+    }
+    pub fn load(file: &Path) -> Prefs { Prefs::parse(&std::fs::read_to_string(file).unwrap_or_default()) }
+    pub fn get(&self, k: &str) -> String {
+        self.map.get(k).cloned().or_else(|| DEFAULTS.iter().find(|(a, _)| *a == k).map(|(_, v)| v.to_string())).unwrap_or_default()
+    }
+    pub fn flag(&self, k: &str) -> bool { self.get(k) == "true" }
+    pub fn set(&mut self, k: &str, v: &str) {
+        if DEFAULTS.iter().any(|(a, b)| *a == k && *b == v) { self.map.remove(k); } else { self.map.insert(k.to_string(), v.to_string()); }
+    }
+    pub fn to_text(&self) -> String {
+        let mut s = String::from("# filem8 settings (key = value). Edited live by the settings panel (Ctrl+,).\n");
+        for (k, v) in &self.map { s.push_str(&format!("{k} = {v}\n")); }
+        s
+    }
+    pub fn save(&self, file: &Path) -> std::io::Result<()> {
+        if let Some(d) = file.parent() { std::fs::create_dir_all(d)?; }
+        let tmp = file.with_extension("tmp");
+        std::fs::write(&tmp, self.to_text())?;
+        std::fs::rename(tmp, file)
+    }
+}

@@ -37,6 +37,7 @@ pub fn load_mesh(path: &Path) -> Result<Mesh, String> {
     let mut m = match ext.as_str() {
         "obj" => parse_obj(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)?,
         "stl" => parse_stl(&std::fs::read(path).map_err(|e| e.to_string())?)?,
+        #[cfg(feature = "model-gltf")]
         "gltf" | "glb" => parse_gltf(path)?,
         _ => return Err(format!("no loader for .{ext} (supported: obj, stl, gltf, glb)")),
     };
@@ -103,6 +104,7 @@ pub fn parse_stl(b: &[u8]) -> Result<Mesh, String> {
     Ok(m)
 }
 
+#[cfg(feature = "model-gltf")]
 fn parse_gltf(path: &Path) -> Result<Mesh, String> {
     let (doc, buffers, _) = gltf::import(path).map_err(|e| e.to_string())?;
     let mut m = Mesh::default();

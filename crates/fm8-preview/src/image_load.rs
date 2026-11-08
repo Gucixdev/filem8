@@ -19,6 +19,7 @@ fn downscale(img: DynamicImage, max: u32) -> (u32, u32, Vec<u8>) {
 
 pub fn load(path: &Path, o: &Opts) -> Preview {
     let ext = fm8_core::class::ext_of(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    #[cfg(feature = "svg")]
     if ext == "svg" || ext == "svgz" {
         return load_svg(path, o);
     }
@@ -77,6 +78,7 @@ pub fn decode(path: &Path, o: &Opts) -> Result<ImageData, String> {
     Ok(ImageData { frames: vec![Frame { w, h, rgba, delay_ms: 0 }], orig_w: ow, orig_h: oh, format: fmt_name })
 }
 
+#[cfg(feature = "svg")]
 fn load_svg(path: &Path, o: &Opts) -> Preview {
     let data = match std::fs::read(path) { Ok(d) => d, Err(e) => return Preview::Error(e.to_string()) };
     match render_svg(&data, o.max_dim) {
@@ -85,6 +87,7 @@ fn load_svg(path: &Path, o: &Opts) -> Preview {
     }
 }
 
+#[cfg(feature = "svg")]
 pub fn render_svg(data: &[u8], max: u32) -> Result<ImageData, String> {
     use resvg::{tiny_skia, usvg};
     let tree = usvg::Tree::from_data(data, &usvg::Options::default()).map_err(|e| e.to_string())?;

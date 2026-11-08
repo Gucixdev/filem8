@@ -258,3 +258,18 @@ fn classify_and_sniff() {
     assert_eq!(human_size_check(), "1.5 KiB");
 }
 fn human_size_check() -> String { human_size(1536) }
+
+#[test]
+fn prefs_roundtrip_and_defaults() {
+    use fm8_core::settings::Prefs;
+    let mut p = Prefs::default();
+    assert_eq!(p.get("view"), "list");
+    assert!(!p.flag("show_hidden"));
+    p.set("show_hidden", "true");
+    p.set("view", "grid");
+    p.set("view", "list"); // back to default: not stored
+    let q = Prefs::parse(&p.to_text());
+    assert!(q.flag("show_hidden"));
+    assert!(!q.map.contains_key("view"));
+    assert_eq!(q.get("key.new_tab"), "ctrl+t");
+}

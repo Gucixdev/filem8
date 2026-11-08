@@ -181,6 +181,7 @@ pub struct TabsResp {
     pub new: bool,
 }
 
+#[derive(Clone)]
 pub struct MenuItem {
     pub label: String,
     pub shortcut: String,
@@ -333,6 +334,9 @@ impl Ui {
     }
 
     /// Draw list for custom drawing (current layer).
+    pub fn set_active(&mut self, id: Id) { self.active = Some(id); }
+    pub fn is_active(&self, id: Id) -> bool { self.active == Some(id) }
+
     pub fn draw(&mut self) -> &mut DrawList {
         self.out()
     }

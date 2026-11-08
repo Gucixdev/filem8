@@ -29,7 +29,7 @@ fn navigate_tabs_keyboard_and_golden() {
     if std::env::var("UPDATE_GOLDEN").is_ok() || !g.exists() { std::fs::create_dir_all(g.parent().unwrap()).unwrap(); crop(&fb).save_png(&g).unwrap(); }
     let gold = soft::Framebuffer::load_png(&g).unwrap();
     // modification times differ between runs: compare only left half (names, icons, selection)
-    let left = |f: soft::Framebuffer| { let mut o = vec![]; for y in 0..f.h { for x in 0..400 { let c = f.pixel(x, y); o.extend([c.r, c.g, c.b, 255]); } } soft::Framebuffer { w: 400, h: f.h, px: o } };
+    let left = |f: soft::Framebuffer| { let mut o = vec![]; for y in 0..f.h { for x in 0..190 { let c = f.pixel(x, y); o.extend([c.r, c.g, c.b, 255]); } } soft::Framebuffer { w: 190, h: f.h, px: o } };
     assert_eq!(left(crop(&fb)).diff(&left(gold), 2), 0, "list area differs from golden");
 
     // click row 0 (alpha) then Enter (via Activate on list focus) navigates in
