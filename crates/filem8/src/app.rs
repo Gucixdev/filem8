@@ -763,15 +763,15 @@ impl App {
         let txt = if status.is_empty() { hint } else { &status };
         let mut right = r.w * 0.6 - 14.0;
         if self.tabs[self.active].mode == ViewMode::Grid {
-            // tile size slider (56..256 px icon edge)
+            // tile size slider (64..512 px icon edge)
             let sr = rect(r.right() - 134.0, r.y + 4.0, 120.0, r.h - 8.0);
             let cur: f32 = crate::views::tile_dims(&self.prefs.get("thumb_size")).0 - 24.0;
             let id = Id::new("tile-slider");
             let ty = sr.y + sr.h / 2.0;
             ui.draw().rounded(rect(sr.x, ty - 1.5, sr.w, 3.0), t.border, 1.5);
-            let f = (cur - 56.0) / 200.0;
+            let f = (cur - 64.0) / 448.0;
             if let Some(nf) = ui.drag_frac(id, sr) {
-                let px = (56.0 + nf * 200.0).round() as u32;
+                let px = (64.0 + nf * 448.0).round() as u32;
                 if px as f32 != cur { self.prefs.set("thumb_size", &px.to_string()); self.prefs_changed("thumb_size"); }
             }
             let kx = sr.x + sr.w * f.clamp(0.0, 1.0);

@@ -7,6 +7,7 @@ pub mod audio;
 pub mod json;
 pub mod image_load;
 pub mod model;
+pub mod gltf;
 pub mod pdf;
 pub mod sheet;
 pub mod text;

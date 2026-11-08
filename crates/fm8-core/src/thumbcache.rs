@@ -51,7 +51,10 @@ pub fn cache_root() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cache/thumbnails")
 }
 
-/// `large` (256px) or `normal` (128px) cache file for `p`.
-pub fn cache_file(p: &Path, large: bool) -> PathBuf {
-    cache_root().join(if large { "large" } else { "normal" }).join(format!("{}.png", hex(&md5(uri(p).as_bytes()))))
+/// Cache size class for a wanted edge in px: 128 `normal`, 256 `large`, 512 `x-large`.
+pub fn class_px(want: u32) -> u32 { if want <= 128 { 128 } else if want <= 256 { 256 } else { 512 } }
+
+/// Cache file for `p` in the class `px` (128/256/512, see `class_px`).
+pub fn cache_file(p: &Path, px: u32) -> PathBuf {
+    cache_root().join(match px { 128 => "normal", 256 => "large", _ => "x-large" }).join(format!("{}.png", hex(&md5(uri(p).as_bytes()))))
 }

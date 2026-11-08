@@ -34,7 +34,7 @@ fn thumbs_generate_cache_and_animate() {
     assert_eq!(th.info, "16x8 PNG");
     assert_eq!((th.img.w, th.img.h), (16, 8));
     // disk cache written, spec naming, tEXt keys present
-    let cf = thumbcache::cache_file(&png, false);
+    let cf = thumbcache::cache_file(&png, 128);
     assert!(cf.starts_with(root.join("cache/thumbnails/normal")), "{cf:?}");
     let b = std::fs::read(&cf).unwrap();
     let txt = fm8_codec::png::text_chunks(&b);

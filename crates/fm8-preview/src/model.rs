@@ -37,8 +37,7 @@ pub fn load_mesh(path: &Path) -> Result<Mesh, String> {
     let mut m = match ext.as_str() {
         "obj" => parse_obj(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)?,
         "stl" => parse_stl(&std::fs::read(path).map_err(|e| e.to_string())?)?,
-        #[cfg(feature = "model-gltf")]
-        "gltf" | "glb" => parse_gltf(path)?,
+        "gltf" | "glb" => crate::gltf::parse(path)?,
         _ => return Err(format!("no loader for .{ext} (supported: obj, stl, gltf, glb)")),
     };
     if m.color == [0.0; 3] { m.color = [0.72, 0.74, 0.8]; }
@@ -102,50 +101,6 @@ pub fn parse_stl(b: &[u8]) -> Result<Mesh, String> {
         m.indices.truncate(m.indices.len() / 3 * 3);
     }
     Ok(m)
-}
-
-#[cfg(feature = "model-gltf")]
-fn parse_gltf(path: &Path) -> Result<Mesh, String> {
-    let (doc, buffers, _) = gltf::import(path).map_err(|e| e.to_string())?;
-    let mut m = Mesh::default();
-    let scene = doc.default_scene().or_else(|| doc.scenes().next()).ok_or("glTF has no scene")?;
-    fn walk(n: gltf::Node, parent: [[f32; 4]; 4], bufs: &[gltf::buffer::Data], m: &mut Mesh) {
-        let local = n.transform().matrix();
-        let w = mul(parent, local);
-        if let Some(mesh) = n.mesh() {
-            for p in mesh.primitives() {
-                if p.mode() != gltf::mesh::Mode::Triangles { continue; }
-                let r = p.reader(|b| Some(&bufs[b.index()]));
-                let Some(pos) = r.read_positions() else { continue };
-                let base = m.positions.len() as u32;
-                m.positions.extend(pos.map(|v| xform(&w, v)));
-                let n_new = m.positions.len() as u32 - base;
-                match r.read_indices() {
-                    Some(ix) => m.indices.extend(ix.into_u32().map(|i| i + base)),
-                    None => m.indices.extend(base..base + n_new / 3 * 3),
-                }
-                if m.color == [0.0; 3] {
-                    let c = p.material().pbr_metallic_roughness().base_color_factor();
-                    m.color = [c[0], c[1], c[2]];
-                }
-            }
-        }
-        for c in n.children() { walk(c, w, bufs, m); }
-    }
-    let id = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
-    for n in scene.nodes() { walk(n, id, &buffers, &mut m); }
-    Ok(m)
-}
-
-// column-major 4x4 as gltf gives it
-fn mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
-    let mut o = [[0.0; 4]; 4];
-    for c in 0..4 { for r in 0..4 { o[c][r] = (0..4).map(|k| a[k][r] * b[c][k]).sum(); } }
-    o
-}
-fn xform(m: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 3] {
-    let f = |r: usize| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r];
-    [f(0), f(1), f(2)]
 }
 
 /// Render the mesh turned by `yaw` radians into a `size`x`size` RGBA image
