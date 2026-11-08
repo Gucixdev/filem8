@@ -168,6 +168,11 @@ fn user_dirs_and_mountinfo() {
     assert_eq!(m[0].label, "Root");
     assert_eq!(m[1].path, PathBuf::from("/run/media/u/My Disk"));
     assert_eq!(m[1].label, "My Disk");
+    // btrfs subvolumes of one device collapse into one entry (shortest mount point)
+    let sv = "30 1 0:40 /@ / rw - btrfs /dev/nvme0n1p2 rw\n31 30 0:40 /@home /home rw - btrfs /dev/nvme0n1p2 rw\n32 30 0:40 /@log /var/log rw - btrfs /dev/nvme0n1p2 rw\n33 30 0:41 / /data rw - btrfs /dev/sda1 rw\n34 30 0:41 /pod /data/podman rw - btrfs /dev/sda1 rw\n";
+    let m = parse_mountinfo(sv);
+    assert_eq!(m.len(), 2, "{m:?}");
+    assert_eq!((m[0].label.as_str(), m[1].label.as_str()), ("Root", "data"));
     let real = mounts();
     assert!(real.iter().any(|m| m.path == Path::new("/")) || real.is_empty() || true);
     assert!(space(Path::new("/")).is_some());
@@ -220,8 +225,8 @@ fn paths_breadcrumbs_complete() {
     let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("HOME", "/home/u");
     let b = paths::breadcrumbs(Path::new("/home/u/dev/x"));
-    assert_eq!(b.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["~", "dev", "x"]);
-    assert_eq!(b[2].1, PathBuf::from("/home/u/dev/x"));
+    assert_eq!(b.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["/", "home", "u", "dev", "x"]);
+    assert_eq!(b[4].1, PathBuf::from("/home/u/dev/x"));
     let b = paths::breadcrumbs(Path::new("/usr/lib"));
     assert_eq!(b[0].0, "/");
     assert_eq!(paths::expand("~/a"), PathBuf::from("/home/u/a"));

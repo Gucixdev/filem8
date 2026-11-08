@@ -106,6 +106,11 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
         if mp.starts_with("/boot") || mp.starts_with("/var/lib") || mp.starts_with("/snap") || mp.starts_with("/sys") || mp.starts_with("/proc") { continue; }
         if squash_snap(fstype, &mp) { continue; }
         if out.iter().any(|m| m.path == Path::new(&mp)) { continue; }
+        // one entry per device: btrfs subvolumes and bind mounts share it
+        if let Some(i) = out.iter().position(|m| m.device == dev) {
+            if mp.len() < out[i].path.as_os_str().len() { let l = if mp == "/" { "Root".to_string() } else { Path::new(&mp).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(mp.clone()) }; out[i].path = PathBuf::from(&mp); out[i].label = l; }
+            continue;
+        }
         let label = if mp == "/" { "Root".to_string() } else { Path::new(&mp).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(mp.clone()) };
         out.push(Mount { device: dev.to_string(), path: PathBuf::from(mp), fstype: fstype.to_string(), label });
     }

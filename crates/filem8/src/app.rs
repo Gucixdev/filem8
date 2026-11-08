@@ -169,7 +169,8 @@ impl App {
             }
         }
         v.push(Place::Header("BOOKMARKS"));
-        for (i, b) in self.bookmarks.iter().enumerate() { v.push(Place::Item { label: b.label.clone(), path: b.path.clone(), icon: Icon::Star, sub: String::new(), bm: Some(i) }); }
+        let shown: Vec<PathBuf> = v.iter().filter_map(|p| if let Place::Item { path, .. } = p { Some(path.clone()) } else { None }).collect();
+        for (i, b) in self.bookmarks.iter().enumerate().filter(|(_, b)| !shown.contains(&b.path)) { v.push(Place::Item { label: b.label.clone(), path: b.path.clone(), icon: Icon::Star, sub: String::new(), bm: Some(i) }); }
         if self.real {
             v.push(Place::Header("DEVICES"));
             for m in places::mounts() {

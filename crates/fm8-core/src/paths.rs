@@ -48,9 +48,9 @@ pub fn percent_encode_path(p: &str) -> String {
 /// when the path is under $HOME.
 pub fn breadcrumbs(p: &Path) -> Vec<(String, PathBuf)> {
     let mut out = vec![];
-    let h = home();
-    let (start, base) = if p.starts_with(&h) && h != Path::new("/") { (h.clone(), Some("~".to_string())) } else { (PathBuf::from("/"), Some("/".to_string())) };
-    out.push((base.unwrap(), start.clone()));
+    // always the full path from "/" (not "~"), so it matches what Edit shows
+    let start = PathBuf::from("/");
+    out.push(("/".to_string(), start.clone()));
     let rel = p.strip_prefix(&start).unwrap_or(Path::new(""));
     let mut acc = start;
     for c in rel.components() {
