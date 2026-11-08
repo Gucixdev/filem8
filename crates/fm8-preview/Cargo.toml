@@ -1,0 +1,21 @@
+[package]
+name = "fm8-preview"
+version = "0.1.0"
+edition.workspace = true
+
+[features]
+default = ["avif", "audio-play"]
+avif = ["image/avif-native"]
+audio-play = ["dep:cpal"]
+
+[dependencies]
+fm8-core = { path = "../fm8-core" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "tga", "qoi", "pnm", "hdr"] }
+resvg = { version = "0.45", default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
+serde_json = "1"
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm", "aac", "isomp4", "alac", "mkv"] }
+cpal = { version = "0.15", optional = true }
+gltf = { version = "1", default-features = false, features = ["import", "utils"] }

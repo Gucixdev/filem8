@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# filem8: build (release, low priority) and open the window. No arguments.
+# Environment knobs: FM8_BACKEND=vulkan|gl|soft  FM8_SCALE=1.5
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+nice -n 19 cargo build --release -p filem8
+exec ./target/release/filem8

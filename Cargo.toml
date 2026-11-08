@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/fm8-ui", "crates/fm8-core"]
+members = ["crates/fm8-ui", "crates/fm8-core", "crates/fm8-preview", "crates/filem8"]
 
 [workspace.package]
 edition = "2021"

@@ -248,7 +248,9 @@ impl DirModel {
             self.cursor = self.view.iter().position(|&i| self.entries[i].path == p);
         }
         let all: std::collections::HashSet<&PathBuf> = self.entries.iter().map(|e| &e.path).collect();
-        self.selected.retain(|p| all.contains(p));
+        if !self.loading {
+            self.selected.retain(|p| all.contains(p));
+        }
     }
 
     pub fn set_sort(&mut self, s: Sort) {
