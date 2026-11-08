@@ -463,6 +463,13 @@ impl Ui {
         clicked
     }
 
+    /// Horizontal drag handle: returns the 0..1 position while the mouse is
+    /// pressed on (or dragging from) `r`.
+    pub fn drag_frac(&mut self, id: Id, r: Rect) -> Option<f32> {
+        if self.hovered(r) { self.cursor = Cursor::Pointer; if self.frame.press[0] { self.active = Some(id); } }
+        if self.active == Some(id) && self.mouse_down[0] { Some(((self.mouse.x - r.x) / r.w).clamp(0.0, 1.0)) } else { None }
+    }
+
     pub fn icon_button(&mut self, id: Id, r: Rect, icon: Icon, tip: &str, enabled: bool, active: bool) -> bool {
         let (clicked, hov, down) = if enabled { self.interact(id, r) } else { (false, false, false) };
         let t = self.theme.clone();

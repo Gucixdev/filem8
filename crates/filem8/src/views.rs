@@ -60,7 +60,9 @@ pub fn owner_name(uid: u32) -> String {
 }
 
 pub fn tile_dims(size: &str) -> (f32, f32) {
-    match size { "small" => (96.0, 96.0), "large" => (170.0, 160.0), _ => (126.0, 118.0) }
+    // numeric value = icon edge in px (tile slider); words kept for old configs
+    let px: f32 = match size { "small" => 72.0, "large" => 146.0, "medium" => 102.0, n => n.parse::<f32>().unwrap_or(102.0).clamp(56.0, 256.0) };
+    (px + 24.0, px + 50.0)
 }
 
 impl App {
@@ -218,6 +220,7 @@ impl App {
         let m = &self.tabs[ai].model;
         let cols = self.layout_cols(&vis, body.right() - 22.0);
         let thumbs_on = self.prefs.flag("thumbnails");
+        self.thumbs.set_large(tile.0 - 24.0 > 128.0);
         let mut rename_done: Option<(bool, String)> = None;
         ui.push_clip(body);
         for pos in resp.first..resp.last {
@@ -254,17 +257,29 @@ impl App {
                     if !renaming { ui.label(name_r, &e.name, name_col); }
                 }
                 ViewMode::Grid => {
-                    let isz = (rr.w - 24.0).min(rr.h - 34.0).max(24.0);
+                    let isz = (rr.w - 24.0).min(rr.h - 50.0).max(24.0);
                     let ir = rect(rr.x + (rr.w - isz) / 2.0, rr.y + 6.0, isz, isz);
-                    let th = if thumbs_on && e.class == fm8_core::class::Class::Image && e.size < 40_000_000 { self.thumbs.get(&e.path) } else { None };
-                    if let Some(img) = th {
+                    let th = if thumbs_on && e.class != fm8_core::class::Class::Dir && e.size < 400_000_000 { self.thumbs.get(&e.path) } else { None };
+                    let mut info = String::new();
+                    if let Some(t) = th {
+                        let mut img = t.img.clone();
+                        info = t.info.clone();
+                        if hov {
+                            if let Some(fr) = self.thumbs.anim(&e.path) {
+                                let total: u32 = fr.iter().map(|f| f.1).sum::<u32>().max(1);
+                                let mut at = ((ui.time * 1000.0) as u64 % total as u64) as u32;
+                                for f in fr.iter() { if at < f.1 { img = f.0.clone(); break; } at -= f.1; }
+                                ui.request_redraw();
+                            }
+                        }
                         let s = (ir.w / img.w as f32).min(ir.h / img.h as f32);
                         let (w, h) = (img.w as f32 * s, img.h as f32 * s);
                         ui.draw().cmds.push(Cmd::Image { r: rect(ir.x + (ir.w - w) / 2.0, ir.y + (ir.h - h) / 2.0, w, h), img, smooth: true });
                     } else {
                         { let ir2 = ir.inset(isz * 0.1); if !self.icons.entry(ui, e, ir2) { ui.icon2(icon_for(e.class), ir2, icol, ibg); } }
                     }
-                    name_r = rect(rr.x + 4.0, rr.bottom() - 26.0, rr.w - 8.0, 22.0);
+                    if !info.is_empty() { ui.label_ex(rect(rr.x + 4.0, rr.bottom() - 20.0, rr.w - 8.0, 16.0), &info, dim, false, 0.5); }
+                    name_r = rect(rr.x + 4.0, rr.bottom() - 42.0, rr.w - 8.0, 22.0);
                     if !renaming { ui.label_ex(name_r, &e.name, name_col, false, 0.5); }
                 }
             }

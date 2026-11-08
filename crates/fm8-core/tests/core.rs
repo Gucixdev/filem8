@@ -351,3 +351,14 @@ fn icon_theme_spec_lookup_inherit_and_fallbacks() {
     assert!(names_for_mime("application/pdf").contains(&"application-pdf".to_string()));
     std::fs::remove_dir_all(&d).ok();
 }
+
+#[test]
+fn thumbcache_md5_and_uri() {
+    use fm8_core::thumbcache::*;
+    assert_eq!(hex(&md5(b"")), "d41d8cd98f00b204e9800998ecf8427e");
+    assert_eq!(hex(&md5(b"abc")), "900150983cd24fb0d6963f7d28e17f72");
+    assert_eq!(hex(&md5(&[b'a'; 1000])), "cabe45dcc9ae5b66ba86600cca6b8ba8");
+    assert_eq!(uri(std::path::Path::new("/tmp/a b/é.png")), "file:///tmp/a%20b/%C3%A9.png");
+    // verified against coreutils md5sum
+    assert_eq!(hex(&md5(b"file:///home/jens/photo%20(1).jpg")), "3198457a3d8a542d80c87dd86a6a5019");
+}

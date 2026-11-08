@@ -713,8 +713,26 @@ impl App {
         if m.loading { s.push_str("  (loading...)"); }
         ui.label(rect(r.x + 14.0, r.y, r.w * 0.4, r.h), &s, t.fg_dim);
         let hint = if self.layout == Layout::Dual { "Tab other pane   F5 copy   F6 move   F2 rename   Del trash" } else { "F2 rename   Ctrl+C/X/V   F3 layout   Ctrl+D bookmark   Ctrl+, settings" };
-        let txt = if self.status.is_empty() { hint } else { &self.status };
-        ui.label_ex(rect(r.x + r.w * 0.4, r.y, r.w * 0.6 - 14.0, r.h), txt, if self.status.is_empty() { t.fg_dim } else { t.warn }, false, 1.0);
+        let status = self.status.clone();
+        let txt = if status.is_empty() { hint } else { &status };
+        let mut right = r.w * 0.6 - 14.0;
+        if self.tabs[self.active].mode == ViewMode::Grid {
+            // tile size slider (56..256 px icon edge)
+            let sr = rect(r.right() - 134.0, r.y + 4.0, 120.0, r.h - 8.0);
+            let cur: f32 = crate::views::tile_dims(&self.prefs.get("thumb_size")).0 - 24.0;
+            let id = Id::new("tile-slider");
+            let ty = sr.y + sr.h / 2.0;
+            ui.draw().rounded(rect(sr.x, ty - 1.5, sr.w, 3.0), t.border, 1.5);
+            let f = (cur - 56.0) / 200.0;
+            if let Some(nf) = ui.drag_frac(id, sr) {
+                let px = (56.0 + nf * 200.0).round() as u32;
+                if px as f32 != cur { self.prefs.set("thumb_size", &px.to_string()); self.prefs_changed("thumb_size"); }
+            }
+            let kx = sr.x + sr.w * f.clamp(0.0, 1.0);
+            ui.draw().rounded(rect(kx - 6.0, ty - 6.0, 12.0, 12.0), t.accent, 6.0);
+            right -= 140.0;
+        }
+        ui.label_ex(rect(r.x + r.w * 0.4, r.y, right, r.h), txt, if self.status.is_empty() { t.fg_dim } else { t.warn }, false, 1.0);
     }
 
     fn confirm_dialog(&mut self, ui: &mut Ui) {

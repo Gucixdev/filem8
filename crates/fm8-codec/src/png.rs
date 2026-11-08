@@ -112,7 +112,26 @@ fn chunk(out: &mut Vec<u8>, ty: &[u8; 4], data: &[u8]) {
 }
 
 /// RGBA8 encoder: per-row Sub filter, fixed-Huffman LZ77.
-pub fn encode(img: &Image) -> Vec<u8> {
+pub fn encode(img: &Image) -> Vec<u8> { encode_text(img, &[]) }
+
+/// Read the tEXt chunks (keyword, text) of a PNG without decoding pixels.
+pub fn text_chunks(b: &[u8]) -> Vec<(String, String)> {
+    let mut v = vec![];
+    let mut i = 8;
+    while i + 12 <= b.len() {
+        let n = u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) as usize;
+        let ty = &b[i + 4..i + 8];
+        if i + 12 + n > b.len() { break }
+        let d = &b[i + 8..i + 8 + n];
+        if ty == b"tEXt" { if let Some(z) = d.iter().position(|&c| c == 0) { v.push((String::from_utf8_lossy(&d[..z]).into_owned(), String::from_utf8_lossy(&d[z + 1..]).into_owned())) } }
+        if ty == b"IDAT" || ty == b"IEND" { break }
+        i += 12 + n;
+    }
+    v
+}
+
+/// Like `encode`, with tEXt chunks (needed for freedesktop thumbnails).
+pub fn encode_text(img: &Image, text: &[(&str, &str)]) -> Vec<u8> {
     let (w, h) = (img.w as usize, img.h as usize);
     let mut raw = Vec::with_capacity(h * (w * 4 + 1));
     for y in 0..h {
@@ -129,6 +148,7 @@ pub fn encode(img: &Image) -> Vec<u8> {
     ihdr.extend_from_slice(&img.h.to_be_bytes());
     ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
     chunk(&mut out, b"IHDR", &ihdr);
+    for (k, v) in text { let mut d = k.as_bytes().to_vec(); d.push(0); d.extend_from_slice(v.as_bytes()); chunk(&mut out, b"tEXt", &d); }
     chunk(&mut out, b"IDAT", &z);
     chunk(&mut out, b"IEND", &[]);
     out
