@@ -12,7 +12,9 @@ pub mod png;
 pub mod qoi;
 pub mod resize;
 pub mod tga;
+pub mod tar;
 pub mod tiff;
+pub mod zip;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image {

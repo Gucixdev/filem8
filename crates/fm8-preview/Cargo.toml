@@ -5,23 +5,19 @@ edition.workspace = true
 
 [features]
 default = ["full"]
-full = ["extra-codecs", "avif", "svg", "audio", "audio-play", "model-gltf", "archive"]
+full = ["extra-codecs", "avif", "svg", "audio", "audio-play", "model-gltf"]
 extra-codecs = ["dep:image"]
 avif = ["extra-codecs", "image/avif-native"]
 svg = ["dep:resvg"]
 audio = ["dep:symphonia"]
 audio-play = ["audio", "dep:cpal"]
 model-gltf = ["dep:gltf"]
-archive = ["dep:zip", "dep:tar", "dep:flate2"]
 
 [dependencies]
 fm8-core = { path = "../fm8-core" }
 fm8-codec = { path = "../fm8-codec" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp"], optional = true }
 resvg = { version = "0.45", default-features = false, optional = true }
-zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
-tar = { version = "0.4", optional = true }
-flate2 = { version = "1", optional = true }
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm", "aac", "isomp4", "alac", "mkv"], optional = true }
 cpal = { version = "0.15", optional = true }
 gltf = { version = "1", default-features = false, features = ["import", "utils"], optional = true }

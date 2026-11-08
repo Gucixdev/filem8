@@ -56,8 +56,22 @@ const DEXT: [u8; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8,
 
 /// Raw deflate stream. `limit` caps the output size (zip-bomb guard).
 pub fn inflate(d: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    if inflate_into(d, limit, &mut out)? { Ok(out) } else { Err("deflate: output too large".into()) }
+}
+
+/// Like [`inflate`] but stops quietly at `limit` bytes and returns what it has
+/// (for listing the head of a huge tar.gz). Errors in the data still surface
+/// unless some output was already produced.
+pub fn inflate_prefix(d: &[u8], limit: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    let _ = inflate_into(d, limit, &mut out);
+    out
+}
+
+/// Ok(true) = stream finished, Ok(false) = stopped at the limit.
+fn inflate_into(d: &[u8], limit: usize, out: &mut Vec<u8>) -> Result<bool, String> {
     let mut b = Bits { d, pos: 0, buf: 0, n: 0 };
-    let mut out: Vec<u8> = Vec::new();
     loop {
         let last = b.bits(1)?;
         match b.bits(2)? {
@@ -113,15 +127,26 @@ pub fn inflate(d: &[u8], limit: usize) -> Result<Vec<u8>, String> {
                         if dd > out.len() { return Err("deflate: distance too far".into()) }
                         for _ in 0..len { out.push(out[out.len() - dd]) }
                     }
-                    if out.len() > limit { return Err("deflate: output too large".into()) }
+                    if out.len() > limit { return Ok(false) }
                 }
             }
             _ => return Err("deflate: bad block".into()),
         }
-        if out.len() > limit { return Err("deflate: output too large".into()) }
+        if out.len() > limit { return Ok(false) }
         if last == 1 { break }
     }
-    Ok(out)
+    Ok(true)
+}
+
+/// gzip container (RFC 1952) -> payload, capped at `limit`.
+pub fn gunzip_prefix(d: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    if d.len() < 18 || d[0] != 0x1f || d[1] != 0x8b || d[2] != 8 { return Err("not gzip".into()) }
+    let flg = d[3];
+    let mut p = 10;
+    if flg & 4 != 0 { p += 2 + u16::from_le_bytes([d[p], d[p + 1]]) as usize }
+    for bit in [8, 16] { if flg & bit != 0 { while *d.get(p).ok_or("gzip: header")? != 0 { p += 1 } p += 1 } }
+    if flg & 2 != 0 { p += 2 }
+    Ok(inflate_prefix(d.get(p..).ok_or("gzip: header")?, limit))
 }
 
 /// zlib container (2-byte header, adler32 ignored).

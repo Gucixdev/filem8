@@ -1,26 +1,22 @@
 use crate::{ArchiveEntry, Preview};
-use std::io::Read;
+use fm8_codec::{inflate, tar, zip};
 use std::path::Path;
 
 const CAP: usize = 5000;
+/// Decompressed bytes inspected when listing a tar.gz (keeps huge archives cheap).
+const TAR_HEAD: usize = 64 << 20;
 
 pub fn load(path: &Path, name: &str) -> Preview {
     let lower = name.to_lowercase();
-    let r = if lower.ends_with(".zip") || lower.ends_with(".jar") || lower.ends_with(".apk") || lower.ends_with(".whl") || lower.ends_with(".epub") || lower.ends_with(".crate_") {
+    let data = match read_head(path) { Ok(d) => d, Err(e) => return Preview::Error(e) };
+    let r = if data.starts_with(b"PK\x03\x04") || data.starts_with(b"PK\x05\x06") {
         zip_list(path).map(|(e, t)| ("ZIP", e, t))
-    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        tar_list(path, true).map(|(e, t)| ("TAR.GZ", e, t))
-    } else if lower.ends_with(".tar") {
-        tar_list(path, false).map(|(e, t)| ("TAR", e, t))
-    } else if lower.ends_with(".crate") {
-        tar_list(path, true).map(|(e, t)| ("TAR.GZ", e, t))
+    } else if data.starts_with(&[0x1f, 0x8b]) && (lower.ends_with(".tar.gz") || lower.ends_with(".tgz") || lower.ends_with(".crate")) {
+        std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| inflate::gunzip_prefix(&b, TAR_HEAD)).map(|t| tar_list(&t, "TAR.GZ"))
+    } else if lower.ends_with(".tar") || data.get(257..262) == Some(b"ustar") {
+        std::fs::read(path).map_err(|e| e.to_string()).map(|b| tar_list(&b, "TAR"))
     } else {
-        // sniff zip magic for other container names
-        let mut h = [0u8; 4];
-        let is_zip = std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut h)).is_ok() && &h == b"PK\x03\x04";
-        if is_zip { zip_list(path).map(|(e, t)| ("ZIP", e, t)) } else {
-            return Preview::Info(vec![format!("{name}"), "Archive format not listable (read-only listing supports zip, tar, tar.gz)".into()]);
-        }
+        return Preview::Info(vec![name.to_string(), "Archive format not listable (read-only listing supports zip, tar, tar.gz)".into()]);
     };
     match r {
         Ok((kind, entries, truncated)) => Preview::Archive { kind: kind.into(), entries, truncated },
@@ -28,28 +24,21 @@ pub fn load(path: &Path, name: &str) -> Preview {
     }
 }
 
-fn zip_list(path: &Path) -> Result<(Vec<ArchiveEntry>, bool), String> {
-    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut z = zip::ZipArchive::new(std::io::BufReader::new(f)).map_err(|e| e.to_string())?;
-    let n = z.len();
-    let mut v = Vec::new();
-    for i in 0..n.min(CAP) {
-        let e = z.by_index_raw(i).map_err(|e| e.to_string())?;
-        v.push(ArchiveEntry { name: e.name().to_string(), size: e.size(), is_dir: e.is_dir() });
-    }
-    Ok((v, n > CAP))
+fn read_head(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut v = vec![0u8; 512];
+    let n = std::fs::File::open(path).and_then(|mut f| f.read(&mut v)).map_err(|e| e.to_string())?;
+    v.truncate(n);
+    Ok(v)
 }
 
-fn tar_list(path: &Path, gz: bool) -> Result<(Vec<ArchiveEntry>, bool), String> {
-    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let r: Box<dyn Read> = if gz { Box::new(flate2::read::GzDecoder::new(f)) } else { Box::new(f) };
-    let mut a = tar::Archive::new(r);
-    let mut v = Vec::new();
-    let mut trunc = false;
-    for e in a.entries().map_err(|e| e.to_string())? {
-        let e = e.map_err(|e| e.to_string())?;
-        if v.len() >= CAP { trunc = true; break; }
-        v.push(ArchiveEntry { name: e.path().map_err(|e| e.to_string())?.to_string_lossy().into_owned(), size: e.header().size().unwrap_or(0), is_dir: e.header().entry_type().is_dir() });
-    }
-    Ok((v, trunc))
+fn zip_list(path: &Path) -> Result<(Vec<ArchiveEntry>, bool), String> {
+    let b = std::fs::read(path).map_err(|e| e.to_string())?;
+    let (es, more) = zip::list(&b, CAP)?;
+    Ok((es.into_iter().map(|e| ArchiveEntry { name: e.name, size: e.size, is_dir: e.is_dir }).collect(), more))
+}
+
+fn tar_list(buf: &[u8], kind: &'static str) -> (&'static str, Vec<ArchiveEntry>, bool) {
+    let (es, more) = tar::list(buf, CAP);
+    (kind, es.into_iter().map(|e| ArchiveEntry { name: e.name, size: e.size, is_dir: e.is_dir }).collect(), more)
 }

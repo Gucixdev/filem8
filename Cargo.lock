@@ -832,7 +832,10 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 name = "fm8-codec"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "image",
+ "tar",
+ "zip",
 ]
 
 [[package]]
@@ -848,15 +851,12 @@ name = "fm8-preview"
 version = "0.1.0"
 dependencies = [
  "cpal",
- "flate2",
  "fm8-codec",
  "fm8-core",
  "gltf",
  "image",
  "resvg",
  "symphonia",
- "tar",
- "zip",
 ]
 
 [[package]]

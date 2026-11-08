@@ -1,7 +1,6 @@
 //! fm8-preview: turns a file into something the preview pane can show.
 //! All loaders are pure (path in, data out) so they run on worker threads and
 //! are testable without a window.
-#[cfg(feature = "archive")]
 pub mod archive;
 #[cfg(feature = "audio")]
 pub mod audio;
@@ -96,7 +95,6 @@ pub fn load(path: &Path, o: &Opts) -> Preview {
         Class::Image => image_load::load(path, o),
         Class::Text | Class::Code | Class::Data if ext == "json" && sheet::looks_like_sheet(path) => sheet::load(path, o),
         Class::Text | Class::Code => text::load(path, &ext, o),
-        #[cfg(feature = "archive")]
         Class::Archive => archive::load(path, &name),
         #[cfg(feature = "audio")]
         Class::Audio => audio::load(path),
