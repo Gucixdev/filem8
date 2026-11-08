@@ -149,6 +149,25 @@ pub fn copy_to(sources: &[PathBuf], dest_dir: &Path, progress: &mut dyn FnMut(u6
 /// Move; same-filesystem renames are atomic, cross-device falls back to copy+delete.
 /// Collisions get "(copy)" names rather than overwriting.
 pub fn move_to(sources: &[PathBuf], dest_dir: &Path) -> Result<Op, String> {
+    move_to_with(sources, dest_dir, &mut |_| true)
+}
+
+/// Total bytes under `paths` (symlinks not followed); for progress bars.
+pub fn tree_size(paths: &[PathBuf]) -> u64 {
+    fn go(p: &Path, n: &mut u64) {
+        let Ok(md) = fs::symlink_metadata(p) else { return };
+        if md.is_dir() { if let Ok(rd) = fs::read_dir(p) { for e in rd.flatten() { go(&e.path(), n); } } } else { *n += md.len(); }
+    }
+    let mut n = 0;
+    for p in paths { go(p, &mut n); }
+    n
+}
+
+/// `move_to` with progress (bytes copied across devices) and cancel (return
+/// false). Cancelling after some items were moved returns those as an `Ok`
+/// partial op so history stays truthful; the caller knows it asked to cancel.
+pub fn move_to_with(sources: &[PathBuf], dest_dir: &Path, progress: &mut dyn FnMut(u64) -> bool) -> Result<Op, String> {
+    let mut done = 0u64;
     let mut pairs: Vec<(PathBuf, PathBuf)> = vec![];
     for s in sources {
         let name = s.file_name().ok_or("bad source")?.to_string_lossy().into_owned();
@@ -158,8 +177,11 @@ pub fn move_to(sources: &[PathBuf], dest_dir: &Path) -> Result<Op, String> {
         match fs::rename(s, &d) {
             Ok(()) => {}
             Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                let mut done = 0;
-                copy_tree(s, &d, &mut |_| true, &mut done).map_err(|e| err(e, s))?;
+                if let Err(e) = copy_tree(s, &d, progress, &mut done) {
+                    if d.exists() { let _ = remove_permanent(&d); }
+                    if e.kind() == io::ErrorKind::Interrupted && !pairs.is_empty() { break; }
+                    return Err(err(e, s));
+                }
                 remove_permanent(s).map_err(|e| err(e, s))?;
             }
             Err(e) => return Err(err(e, s)),

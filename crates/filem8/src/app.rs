@@ -10,7 +10,7 @@ use crate::settings_ui::{bind_matches, SettingsState};
 use crate::thumbs::Thumbs;
 use crate::views::*;
 use fm8_core::class::Class;
-use fm8_core::fileops::{self, History};
+use fm8_core::fileops::{self, History, Op};
 use fm8_core::listing::{human_size, DirModel, Sort, SortKey};
 use fm8_core::paths;
 use fm8_core::places::{self, Bookmark};
@@ -96,6 +96,7 @@ pub struct App {
     pub(crate) bm_rename: Option<(usize, String)>,
     bm_press: Option<(usize, Vec2)>,
     bm_drag: Option<usize>,
+    pub(crate) xfers: Vec<crate::xfer::Transfer>,
 }
 
 pub fn fmt_time(t: Option<std::time::SystemTime>) -> String {
@@ -149,7 +150,7 @@ impl App {
         let mut a = App {
             tabs: vec![], active: 0, other: None, side: 0, layout: Layout::Single, next_uid: 1, places: vec![], bookmarks, path_edit: None, ctx: None,
             status: String::new(), history: History::default(), memory, prefs, cfg_dir, bm_file, real, quit: false, open_external: vec![], find: String::new(), find_at: 0.0,
-            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
+            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
             rename: None, pending_open: false, settings: None, confirm: None, theme_request: None, bm_rename: None, bm_press: None, bm_drag: None,
         };
         if real { let th = a.prefs.get("icon_theme"); a.icons.configure(fm8_core::icontheme::default_search_dirs(), &th); }
@@ -378,12 +379,54 @@ impl App {
     fn transfer(&mut self, paths: &[PathBuf], dir: &Path, copy: bool) {
         let paths: Vec<PathBuf> = paths.iter().filter(|p| !dir.starts_with(p) && (copy || p.parent() != Some(dir))).cloned().collect();
         if paths.is_empty() { return; }
-        let res = if copy { fileops::copy_to(&paths, dir, &mut |_| true) } else { fileops::move_to(&paths, dir) };
-        match res {
-            Ok(op) => { self.history.push(op); self.status = format!("{} {} item(s) to {}", if copy { "Copied" } else { "Moved" }, paths.len(), dir.display()); }
-            Err(e) => self.status = e,
+        self.xfers.push(crate::xfer::Transfer::start(paths, dir.to_path_buf(), copy));
+    }
+
+    /// Test hook: queue a transfer that stays held (progress panel visible).
+    pub fn hold_transfer_for_test(&mut self, paths: Vec<PathBuf>, dest: PathBuf) { self.xfers.push(crate::xfer::Transfer::start_held(paths, dest, true)); }
+
+    pub fn transfers_active(&self) -> bool { !self.xfers.is_empty() }
+
+    fn poll_xfers(&mut self) -> bool {
+        let mut fin = vec![];
+        for (i, x) in self.xfers.iter().enumerate() { if let Some(r) = x.poll() { fin.push((i, r)); } }
+        let any = !fin.is_empty();
+        for (i, r) in fin.into_iter().rev() {
+            let x = self.xfers.remove(i);
+            let verb = if x.copy { "Copied" } else { "Moved" };
+            match r {
+                Ok(op) => {
+                    let n = match &op { Op::Copy { created } => created.len(), Op::Move { pairs } => pairs.len(), _ => x.n };
+                    self.history.push(op);
+                    self.status = if x.cancelled() { format!("Cancelled after {n} of {} item(s)", x.n) } else { format!("{verb} {n} item(s) to {}", x.dest.display()) };
+                }
+                Err(e) => self.status = if x.cancelled() { "Cancelled".into() } else { e },
+            }
         }
-        self.reload_all();
+        if any { self.reload_all(); }
+        any
+    }
+
+    fn transfer_panel(&mut self, ui: &mut Ui) {
+        if self.xfers.is_empty() { return; }
+        let t = ui.theme.clone();
+        ui.request_redraw();
+        let mut cancel = None;
+        for (i, x) in self.xfers.iter().enumerate() {
+            let w = 340.0;
+            let r = rect(ui.size.x - w - 14.0, ui.size.y - 36.0 - 62.0 * (i as f32 + 1.0), w, 54.0);
+            ui.draw().rounded(r, t.bg_alt, t.radius);
+            ui.draw().stroke(r, t.border, t.radius, 1.0);
+            let what = format!("{} {} item(s) to {}", if x.copy { "Copying" } else { "Moving" }, x.n, x.dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            ui.label(rect(r.x + 10.0, r.y + 2.0, w - 90.0, 24.0), &what, t.fg);
+            let f = x.fraction();
+            let bar = rect(r.x + 10.0, r.y + 34.0, w - 100.0, 8.0);
+            ui.draw().rounded(bar, t.border, 4.0);
+            if f > 0.0 { ui.draw().rounded(rect(bar.x, bar.y, (bar.w * f).max(8.0), bar.h), t.accent, 4.0); }
+            ui.label_ex(rect(bar.right() + 6.0, r.y + 28.0, 28.0, 20.0), &format!("{}%", (f * 100.0) as u32), t.fg_dim, false, 1.0);
+            if ui.button(Id::new("xfer-cancel").with(i as u64), rect(r.right() - 58.0, r.y + 6.0, 50.0, 22.0), "Stop", BtnStyle::Normal) { cancel = Some(i); }
+        }
+        if let Some(i) = cancel { self.xfers[i].cancel(); }
     }
 
     fn drop_onto(&mut self, paths: Vec<PathBuf>, target: &Path, copy: bool) {
@@ -425,6 +468,7 @@ impl App {
         let active = self.active;
         for (i, t) in self.tabs.iter_mut().enumerate() { ch |= tick_tab(t, i == active); }
         if let Some(o) = self.other.as_mut() { let a = o.active; for (i, t) in o.tabs.iter_mut().enumerate() { ch |= tick_tab(t, i == a); } }
+        ch |= self.poll_xfers();
         ch |= self.thumbs.poll();
         ch |= self.icons.poll();
         ch |= self.preview.poll();
@@ -510,6 +554,7 @@ impl App {
             }
         }
         self.status_bar(ui, status);
+        self.transfer_panel(ui);
         self.context_menu(ui);
         self.finish_drag(ui);
         if self.cols_dirty && !ui.mouse_down[0] {

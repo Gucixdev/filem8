@@ -46,7 +46,7 @@ impl Drop for Env { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.r
 fn settle(app: &mut App) {
     for _ in 0..400 {
         app.tick();
-        if !app.tabs[app.active].model.loading { break; }
+        if !app.tabs[app.active].model.loading && !app.transfers_active() { break; }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     app.tick();
@@ -221,13 +221,14 @@ fn rename_copy_paste_and_undo() {
     let (k, m) = ctrl('c');
     e.keys(&mut app, k, m);
     app.paste_into(&d.join("sub"));
-    assert!(d.join("sub/notes.txt").exists() && d.join("notes.txt").exists());
     settle(&mut app);
+    assert!(d.join("sub/notes.txt").exists() && d.join("notes.txt").exists());
     // cut + paste moves
     app.tabs[0].model.click(i, false, false);
     let (k, m) = ctrl('x');
     e.keys(&mut app, k, m);
     app.paste_into(&d.join("sub"));
+    settle(&mut app);
     assert!(!d.join("notes.txt").exists());
 }
 

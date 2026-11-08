@@ -7,7 +7,7 @@ fn tmp(tag: &str) -> PathBuf {
     std::fs::create_dir_all(&p).unwrap();
     p
 }
-fn settle(app: &mut App) { for _ in 0..300 { app.tick(); if !app.tabs[app.active].model.loading { break; } std::thread::sleep(std::time::Duration::from_millis(5)); } app.tick(); }
+fn settle(app: &mut App) { for _ in 0..300 { app.tick(); if !app.tabs[app.active].model.loading && !app.transfers_active() { break; } std::thread::sleep(std::time::Duration::from_millis(5)); } app.tick(); }
 fn frame(app: &mut App, ui: &mut Ui, t: f64, ev: &[Event]) -> soft::Framebuffer { render_frame(ui, 1000, 600, 1.0, t, ev, |ui| app.build(ui)) }
 fn click(x: f32, y: f32) -> Vec<Event> { vec![Event::MouseMove(v2(x, y)), Event::MouseDown(Button::Left)] }
 
