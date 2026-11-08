@@ -277,6 +277,14 @@ fn main() {
         if let Err(e) = screenshot(&args[1..]) { eprintln!("filem8: {e}"); std::process::exit(1); }
         return;
     }
+    if args.first().map(|s| s == "--get-icons").unwrap_or(false) {
+        let stdin = std::io::stdin();
+        std::process::exit(filem8::geticons::run(&mut stdin.lock(), &mut std::io::stdout(), &filem8::geticons::data_home(), cfg!(feature = "full")));
+    }
+    if args.first().map(|s| s == "--help" || s == "-h").unwrap_or(false) {
+        println!("filem8 [DIR]\n  --screenshot OUT.png [DIR] [WxH] [SCALE]   headless render\n  --get-icons                                 list/download an open icon theme (asks first)");
+        return;
+    }
     let theme_file = fm8_core::settings::config_dir().join("theme");
     let ui = Ui::new(load_theme(&theme_file));
     let start = args.first().map(|a| fm8_core::paths::expand(a)).filter(|p| p.is_dir()).unwrap_or_else(fm8_core::paths::home);

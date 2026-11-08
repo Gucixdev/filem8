@@ -87,6 +87,7 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("confirm_trash", "false"),
     ("backend", "auto"),
     ("theme", "file"),
+    ("icon_theme", "auto"),
     ("key.new_tab", "ctrl+t"),
     ("key.close_tab", "ctrl+w"),
     ("key.path", "ctrl+l"),

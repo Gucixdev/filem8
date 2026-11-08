@@ -314,3 +314,33 @@ fn settings_panel_changes_apply_live_and_persist() {
     let app2 = e.app(&d);
     assert_eq!(app2.prefs.get("view"), "grid");
 }
+
+#[test]
+fn theme_icons_replace_procedural_ones_and_fall_back() {
+    let mut e = env("icons");
+    // a tiny theme: pure red folder, pure green text-x-generic (PNG, 48x48 fixed)
+    let th = e.root.join("themes/fake");
+    let solid = |c: [u8; 4]| { let mut i = fm8_codec::Image::new(48, 48); for p in i.rgba.chunks_mut(4) { p.copy_from_slice(&c) } fm8_codec::png::encode(&i) };
+    std::fs::create_dir_all(th.join("48x48/places")).unwrap();
+    std::fs::create_dir_all(th.join("48x48/mimetypes")).unwrap();
+    std::fs::write(th.join("index.theme"), "[Icon Theme]\nName=Fake\nDirectories=48x48/places,48x48/mimetypes\n[48x48/places]\nSize=48\nType=Fixed\n[48x48/mimetypes]\nSize=48\nType=Fixed\n").unwrap();
+    std::fs::write(th.join("48x48/places/folder.png"), solid([255, 0, 0, 255])).unwrap();
+    std::fs::write(th.join("48x48/mimetypes/text-x-generic.png"), solid([0, 255, 0, 255])).unwrap();
+    let work = e.root.join("work");
+    std::fs::create_dir_all(work.join("adir")).unwrap();
+    std::fs::write(work.join("note.txt"), "x").unwrap();
+    let mut app = e.app(&work);
+    // procedural first: no pure red / pure green anywhere
+    let count = |fb: &soft::Framebuffer, c: [u8; 3]| (0..fb.h).flat_map(|y| (0..fb.w).map(move |x| (x, y))).filter(|&(x, y)| { let p = fb.pixel(x, y); [p.r, p.g, p.b] == c }).count();
+    let fb = e.frame(&mut app, &[]);
+    assert_eq!((count(&fb, [255, 0, 0]), count(&fb, [0, 255, 0])), (0, 0));
+    app.icons.configure(vec![e.root.join("themes")], "fake");
+    let mut fb = e.frame(&mut app, &[]);
+    for _ in 0..200 { std::thread::sleep(std::time::Duration::from_millis(5)); app.tick(); fb = e.frame(&mut app, &[]); if count(&fb, [255, 0, 0]) > 0 { break } }
+    assert!(count(&fb, [255, 0, 0]) > 100, "red folder icon drawn");
+    assert!(count(&fb, [0, 255, 0]) > 100, "green text icon drawn");
+    // a theme without the icon falls back to procedural icons (no crash, no red)
+    app.icons.configure(vec![e.root.join("themes")], "missing");
+    for _ in 0..20 { std::thread::sleep(std::time::Duration::from_millis(5)); app.tick(); fb = e.frame(&mut app, &[]); }
+    assert_eq!(count(&fb, [255, 0, 0]), 0);
+}

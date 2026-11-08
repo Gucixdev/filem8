@@ -238,7 +238,7 @@ impl App {
             match mode {
                 ViewMode::List => {
                     let first_x = cols.first().map(|c| c.1).unwrap_or(rr.right() - 8.0);
-                    ui.icon2(icon_for(e.class), rect(rr.x + 8.0, rr.y + 5.0, 20.0, 20.0), icol, ibg);
+                    { let ir = rect(rr.x + 8.0, rr.y + 5.0, 20.0, 20.0); if !self.icons.entry(ui, e, ir) { ui.icon2(icon_for(e.class), ir, icol, ibg); } }
                     name_r = rect(rr.x + 38.0, rr.y, (first_x - rr.x - 46.0).max(20.0), rr.h);
                     if !renaming { ui.label(name_r, &e.name, name_col); }
                     for &(ci, x, w) in &cols {
@@ -249,7 +249,7 @@ impl App {
                     }
                 }
                 ViewMode::Compact => {
-                    ui.icon2(icon_for(e.class), rect(rr.x + 8.0, rr.y + 5.0, 20.0, 20.0), icol, ibg);
+                    { let ir = rect(rr.x + 8.0, rr.y + 5.0, 20.0, 20.0); if !self.icons.entry(ui, e, ir) { ui.icon2(icon_for(e.class), ir, icol, ibg); } }
                     name_r = rect(rr.x + 38.0, rr.y, rr.w - 44.0, rr.h);
                     if !renaming { ui.label(name_r, &e.name, name_col); }
                 }
@@ -262,7 +262,7 @@ impl App {
                         let (w, h) = (img.w as f32 * s, img.h as f32 * s);
                         ui.draw().cmds.push(Cmd::Image { r: rect(ir.x + (ir.w - w) / 2.0, ir.y + (ir.h - h) / 2.0, w, h), img, smooth: true });
                     } else {
-                        ui.icon2(icon_for(e.class), ir.inset(isz * 0.1), icol, ibg);
+                        { let ir2 = ir.inset(isz * 0.1); if !self.icons.entry(ui, e, ir2) { ui.icon2(icon_for(e.class), ir2, icol, ibg); } }
                     }
                     name_r = rect(rr.x + 4.0, rr.bottom() - 26.0, rr.w - 8.0, 22.0);
                     if !renaming { ui.label_ex(name_r, &e.name, name_col, false, 0.5); }
@@ -279,6 +279,6 @@ impl App {
         }
         ui.pop_clip();
         if let Some((ok, name)) = rename_done { self.finish_rename(ok, name); ui.focus = None; }
-        if self.tabs[ai].model.loading || self.thumbs.busy() { ui.request_redraw(); }
+        if self.tabs[ai].model.loading || self.thumbs.busy() || self.icons.busy() { ui.request_redraw(); }
     }
 }

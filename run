@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# filem8: build (release, low priority) and open the window. No arguments.
+# filem8: build (release, low priority) and open the window. Arguments go to filem8 (e.g. `run --get-icons`).
 # Light build by default (window + images). FM8_FULL=1 adds SVG, audio, glTF, archives.
 # Other knobs: FM8_BACKEND=vulkan|gl|soft  FM8_SCALE=1.5
 set -euo pipefail
@@ -9,4 +9,4 @@ if [ "${FM8_FULL:-0}" = 1 ]; then
 else
   nice -n 19 cargo build --release -p filem8
 fi
-exec ./target/release/filem8
+exec ./target/release/filem8 "$@"

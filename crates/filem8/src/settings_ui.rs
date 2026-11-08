@@ -5,7 +5,7 @@ use crate::app::*;
 use fm8_ui::*;
 
 #[derive(Clone, Copy)]
-enum Kind { Bool, Choice(&'static [&'static str]) }
+enum Kind { Bool, Choice(&'static [&'static str]), IconThemes }
 struct Field { key: &'static str, label: &'static str, hint: &'static str, kind: Kind }
 
 const VIEWS: &[&str] = &["list", "grid", "compact"];
@@ -24,6 +24,7 @@ const GENERAL: &[Field] = &[
 ];
 const APPEARANCE: &[Field] = &[
     Field { key: "theme", label: "Theme", hint: "file = ~/.config/filem8/theme (colorado)", kind: Kind::Choice(THEMES) },
+    Field { key: "icon_theme", label: "Icon theme", hint: "installed freedesktop themes; run `filem8 --get-icons` to fetch one", kind: Kind::IconThemes },
     Field { key: "thumb_size", label: "Icon / thumbnail size", hint: "grid view", kind: Kind::Choice(SIZES) },
     Field { key: "thumbnails", label: "Image thumbnails", hint: "grid view", kind: Kind::Bool },
 ];
@@ -132,7 +133,7 @@ impl App {
                 let cur = self.prefs.get(f.key);
                 match f.kind {
                     Kind::Bool => if checkbox(ui, Id::new("sf").with(i as u64 + 100 * st.section as u64), ctl, cur == "true") { self.prefs.set(f.key, if cur == "true" { "false" } else { "true" }); changed = Some(f.key); },
-                    Kind::Choice(opts) => { let (pick, lines) = choice(ui, Id::new("sf").with(i as u64 + 100 * st.section as u64), ctl, opts, &cur); ry += (lines as f32 - 1.0) * 36.0; if let Some(k) = pick { self.prefs.set(f.key, opts[k]); changed = Some(f.key); } }
+                    Kind::Choice(_) | Kind::IconThemes => { let opts: &[&str] = match f.kind { Kind::Choice(o) => o, _ => crate::iconset::theme_choices() }; let (pick, lines) = choice(ui, Id::new("sf").with(i as u64 + 100 * st.section as u64), ctl, opts, &cur); ry += (lines as f32 - 1.0) * 36.0; if let Some(k) = pick { self.prefs.set(f.key, opts[k]); changed = Some(f.key); } }
                 }
             }
         } else if st.section == 1 {

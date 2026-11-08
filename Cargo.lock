@@ -785,6 +785,7 @@ name = "filem8"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "fm8-codec",
  "fm8-core",
  "fm8-preview",
  "fm8-ui",

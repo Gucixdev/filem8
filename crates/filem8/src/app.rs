@@ -83,6 +83,7 @@ pub struct App {
     pub(crate) cols_dirty: bool,
     pub(crate) owners: RefCell<HashMap<u32, String>>,
     pub(crate) thumbs: Thumbs,
+    pub icons: crate::iconset::IconSet,
     pub preview: PreviewPane,
     pub clip: Option<(Vec<PathBuf>, bool)>,
     pub(crate) drag: Option<Drag>,
@@ -148,9 +149,10 @@ impl App {
         let mut a = App {
             tabs: vec![], active: 0, other: None, side: 0, layout: Layout::Single, next_uid: 1, places: vec![], bookmarks, path_edit: None, ctx: None,
             status: String::new(), history: History::default(), memory, prefs, cfg_dir, bm_file, real, quit: false, open_external: vec![], find: String::new(), find_at: 0.0,
-            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
+            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
             rename: None, pending_open: false, settings: None, confirm: None, theme_request: None, bm_rename: None, bm_press: None, bm_drag: None,
         };
+        if real { let th = a.prefs.get("icon_theme"); a.icons.configure(fm8_core::icontheme::default_search_dirs(), &th); }
         a.refresh_places();
         a.new_tab(start);
         a
@@ -403,6 +405,7 @@ impl App {
                 let dir = self.tabs[ai].model.dir.clone();
                 if !self.memory.map.contains_key(&dir) { self.apply_view(&dir); self.tabs[ai].model.rebuild_view(); }
             }
+            "icon_theme" => self.icons.configure(fm8_core::icontheme::default_search_dirs(), &self.prefs.get("icon_theme")),
             "preview" => if !self.prefs.flag("preview") && self.layout == Layout::Preview { self.layout = Layout::Single; },
             "theme" => {
                 let t = match self.prefs.get("theme").as_str() {
@@ -423,6 +426,7 @@ impl App {
         for (i, t) in self.tabs.iter_mut().enumerate() { ch |= tick_tab(t, i == active); }
         if let Some(o) = self.other.as_mut() { let a = o.active; for (i, t) in o.tabs.iter_mut().enumerate() { ch |= tick_tab(t, i == a); } }
         ch |= self.thumbs.poll();
+        ch |= self.icons.poll();
         ch |= self.preview.poll();
         ch || self.tabs[self.active].model.loading
     }
@@ -637,7 +641,9 @@ impl App {
                     let active = *path == cur;
                     if active { ui.draw().rounded(ir, t.selection_bg, t.radius); } else if hov { ui.draw().rounded(ir, t.hover(), t.radius); }
                     let fg = if active { t.selection_fg } else { t.fg };
-                    ui.icon2(*icon, rect(ir.x + 10.0, ir.y + (32.0 - 18.0) / 2.0, 18.0, 18.0), if active { fg } else { t.fg_dim }, t.bg_alt);
+                    let ar = rect(ir.x + 10.0, ir.y + (32.0 - 18.0) / 2.0, 18.0, 18.0);
+                    let themed = self.icons.for_icon(*icon, ar.w);
+                    if !self.icons.draw(ui, themed, ar) { ui.icon2(*icon, ar, if active { fg } else { t.fg_dim }, t.bg_alt); }
                     let lr = rect(ir.x + 38.0, ir.y, ir.w - 44.0, 32.0);
                     let renaming = matches!((&self.bm_rename, bm), (Some((i, _)), Some(b)) if i == b);
                     if renaming {
