@@ -313,3 +313,41 @@ fn mime_by_extension_then_magic() {
     assert_eq!(mime_sniff(b"\0\0\0\x18ftypmp42"), Some("video/mp4"));
     assert_eq!(mime_sniff(b"<?xml version='1.0'?><svg xmlns='x'/>"), Some("image/svg+xml"));
 }
+
+#[test]
+fn icon_theme_spec_lookup_inherit_and_fallbacks() {
+    use fm8_core::icontheme::*;
+    let d = std::env::temp_dir().join(format!("fm8-icons-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let w = |p: &str, t: &str| { let p = d.join(p); std::fs::create_dir_all(p.parent().unwrap()).unwrap(); std::fs::write(p, t).unwrap(); };
+    w("mine/index.theme", "[Icon Theme]\nName=Mine\nInherits=base\nDirectories=16x16/places,scalable/mimetypes\n[16x16/places]\nSize=16\nType=Fixed\n[scalable/mimetypes]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n");
+    w("mine/16x16/places/folder.png", "");
+    w("mine/scalable/mimetypes/application-pdf.svg", "");
+    w("base/index.theme", "[Icon Theme]\nName=Base\nDirectories=32x32/mimetypes,48x48/mimetypes\n[32x32/mimetypes]\nSize=32\nType=Fixed\n[48x48/mimetypes]\nSize=48\nType=Fixed\n");
+    w("base/32x32/mimetypes/text-x-generic.png", "");
+    w("base/48x48/mimetypes/text-x-generic.png", "");
+    w("hicolor/index.theme", "[Icon Theme]\nName=hicolor\nDirectories=48x48/apps\n[48x48/apps]\nSize=48\nType=Fixed\n");
+    w("hicolor/48x48/apps/unknown.png", "");
+    w("cursors/index.theme", "[Icon Theme]\nName=c\n");
+    let mut t = IconThemes::new(vec![d.clone()]);
+    assert_eq!(t.installed(), vec!["base", "hicolor", "mine"]);
+    // own dir, fixed: exact and nearest
+    assert!(t.find("mine", "folder", 16, 1, true).unwrap().ends_with("mine/16x16/places/folder.png"));
+    assert!(t.find("mine", "folder", 64, 1, true).unwrap().ends_with("mine/16x16/places/folder.png"));
+    // svg only when allowed
+    assert!(t.find("mine", "application-pdf", 128, 1, true).unwrap().ends_with("application-pdf.svg"));
+    assert!(t.find("mine", "application-pdf", 128, 1, false).is_none());
+    // inherited, picks the exact size
+    assert!(t.find("mine", "text-x-generic", 32, 1, true).unwrap().ends_with("base/32x32/mimetypes/text-x-generic.png"));
+    assert!(t.find("mine", "text-x-generic", 44, 1, true).unwrap().ends_with("48x48/mimetypes/text-x-generic.png"));
+    // hicolor last, then dash fallback via names list
+    assert!(t.find("mine", "unknown", 48, 1, true).unwrap().ends_with("hicolor/48x48/apps/unknown.png"));
+    let names = names_for_mime("text/x-rust");
+    assert_eq!(names[0], "text-x-rust");
+    assert!(t.find_any("mine", &names, 32, 1, true).unwrap().ends_with("text-x-generic.png"));
+    assert!(t.find_any("mine", &["image-x-foo-bar".to_string()], 32, 1, true).is_none());
+    assert!(t.find_any("mine", &["application-pdf-x-y".to_string()], 32, 1, true).is_some()); // dash fallback -> application-pdf
+    assert!(t.usable("mine", true) && !t.usable("base", true));
+    assert!(names_for_mime("application/pdf").contains(&"application-pdf".to_string()));
+    std::fs::remove_dir_all(&d).ok();
+}

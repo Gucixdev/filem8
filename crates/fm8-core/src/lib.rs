@@ -2,6 +2,7 @@
 pub mod class;
 pub mod fileops;
 pub mod fuzzy;
+pub mod icontheme;
 pub mod listing;
 pub mod paths;
 pub mod places;
