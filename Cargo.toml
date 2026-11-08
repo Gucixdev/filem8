@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/fm8-ui"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[profile.dev]
+opt-level = 1
+[profile.test]
+opt-level = 2
