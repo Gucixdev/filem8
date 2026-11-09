@@ -335,13 +335,13 @@ fn theme_icons_replace_procedural_ones_and_fall_back() {
     let count = |fb: &soft::Framebuffer, c: [u8; 3]| (0..fb.h).flat_map(|y| (0..fb.w).map(move |x| (x, y))).filter(|&(x, y)| { let p = fb.pixel(x, y); [p.r, p.g, p.b] == c }).count();
     let fb = e.frame(&mut app, &[]);
     assert_eq!((count(&fb, [255, 0, 0]), count(&fb, [0, 255, 0])), (0, 0));
-    app.icons.configure(vec![e.root.join("themes")], "fake");
+    app.icons.configure(vec![e.root.join("themes")], "fake", true);
     let mut fb = e.frame(&mut app, &[]);
     for _ in 0..200 { std::thread::sleep(std::time::Duration::from_millis(5)); app.tick(); fb = e.frame(&mut app, &[]); if count(&fb, [255, 0, 0]) > 0 { break } }
     assert!(count(&fb, [255, 0, 0]) > 100, "red folder icon drawn");
     assert!(count(&fb, [0, 255, 0]) > 100, "green text icon drawn");
     // a theme without the icon falls back to procedural icons (no crash, no red)
-    app.icons.configure(vec![e.root.join("themes")], "missing");
+    app.icons.configure(vec![e.root.join("themes")], "missing", true);
     for _ in 0..20 { std::thread::sleep(std::time::Duration::from_millis(5)); app.tick(); fb = e.frame(&mut app, &[]); }
     assert_eq!(count(&fb, [255, 0, 0]), 0);
 }

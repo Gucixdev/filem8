@@ -1,6 +1,6 @@
 //! Theme icons for files, folders and places: resolved on a worker thread via
 //! the freedesktop icon theme lookup in fm8-core, rasterised (PNG with our own
-//! decoder, SVG with resvg when built with `full`) and cached by (name, size).
+//! decoder, SVG with resvg, the `svg-icons` feature, on by default) and cached by (name, size).
 //! `get()` returns None until an icon is ready; callers draw the procedural icon meanwhile.
 use fm8_core::icontheme::{names_for_mime, names_for_place, IconThemes};
 use fm8_ui::{Icon, Image};
@@ -9,11 +9,11 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
-pub const CAN_SVG: bool = cfg!(feature = "full");
+pub const CAN_SVG: bool = cfg!(feature = "svg-icons");
 
 enum Msg {
-    Setup { search: Vec<PathBuf>, theme: String },
-    Load { key: (String, u32), names: Vec<String> },
+    Setup { search: Vec<PathBuf>, theme: String, dark: bool },
+    Load { key: (String, u32), names: Vec<String>, tint: Option<[u8; 3]> },
 }
 
 enum Slot { Pending, Ready(Arc<Image>), Missing }
@@ -43,14 +43,14 @@ impl IconSet {
     /// A disabled set (headless tests, "builtin" theme): `get()` is always None.
     pub fn off() -> IconSet { IconSet { tx: None, rx: None, map: HashMap::new(), pending: 0, theme: "builtin".into() } }
 
-    pub fn new(search: Vec<PathBuf>, theme: &str) -> IconSet {
+    pub fn new(search: Vec<PathBuf>, theme: &str, dark: bool) -> IconSet {
         let mut s = IconSet::off();
-        s.configure(search, theme);
+        s.configure(search, theme, dark);
         s
     }
 
     /// (Re)start the worker for `theme` ("auto" picks the best installed one, "builtin" disables).
-    pub fn configure(&mut self, search: Vec<PathBuf>, theme: &str) {
+    pub fn configure(&mut self, search: Vec<PathBuf>, theme: &str, dark: bool) {
         self.map.clear();
         self.pending = 0;
         self.theme = theme.to_string();
@@ -58,23 +58,25 @@ impl IconSet {
         let (tx, wrx) = channel::<Msg>();
         let (dtx, rx) = channel();
         std::thread::spawn(move || worker(wrx, dtx));
-        let _ = tx.send(Msg::Setup { search, theme: theme.to_string() });
+        let _ = tx.send(Msg::Setup { search, theme: theme.to_string(), dark });
         self.tx = Some(tx);
         self.rx = Some(rx);
     }
 
     pub fn enabled(&self) -> bool { self.tx.is_some() }
 
-    pub fn get(&mut self, names: impl FnOnce() -> Vec<String>, key: &str, px: f32) -> Option<Arc<Image>> {
+    pub fn get(&mut self, names: impl FnOnce() -> Vec<String>, key: &str, px: f32) -> Option<Arc<Image>> { self.get_tinted(names, key, px, None) }
+
+    pub fn get_tinted(&mut self, names: impl FnOnce() -> Vec<String>, key: &str, px: f32, tint: Option<[u8; 3]>) -> Option<Arc<Image>> {
         let tx = self.tx.as_ref()?;
-        let k = (key.to_string(), bucket(px));
+        let k = (match tint { Some(c) => format!("{key}#{:02x}{:02x}{:02x}", c[0], c[1], c[2]), None => key.to_string() }, bucket(px));
         match self.map.get(&k) {
             Some(Slot::Ready(i)) => Some(i.clone()),
             Some(_) => None,
             None => {
                 self.map.insert(k.clone(), Slot::Pending);
                 self.pending += 1;
-                let _ = tx.send(Msg::Load { key: k, names: names() });
+                let _ = tx.send(Msg::Load { key: k, names: names(), tint });
                 None
             }
         }
@@ -105,12 +107,12 @@ fn worker(rx: Receiver<Msg>, tx: Sender<((String, u32), Option<Arc<Image>>)>) {
     let mut theme = String::from("hicolor");
     while let Ok(m) = rx.recv() {
         match m {
-            Msg::Setup { search, theme: t } => {
+            Msg::Setup { search, theme: t, dark } => {
                 themes = IconThemes::new(search);
-                theme = if t == "auto" { themes.auto(CAN_SVG).unwrap_or_else(|| "hicolor".into()) } else { t };
+                theme = if t == "auto" { themes.auto(CAN_SVG, dark).unwrap_or_else(|| "hicolor".into()) } else { t };
             }
-            Msg::Load { key, names } => {
-                let img = themes.find_any(&theme, &names, key.1, 1, CAN_SVG).and_then(|p| rasterise(&p, key.1));
+            Msg::Load { key, names, tint } => {
+                let img = themes.find_any(&theme, &names, key.1, 1, CAN_SVG).and_then(|p| rasterise(&p, key.1)).map(|i| match tint { Some(c) => tinted(&i, c), None => i });
                 if tx.send((key, img)).is_err() { return }
             }
         }
@@ -120,19 +122,47 @@ fn worker(rx: Receiver<Msg>, tx: Sender<((String, u32), Option<Arc<Image>>)>) {
 fn rasterise(p: &std::path::Path, size: u32) -> Option<Arc<Image>> {
     let data = std::fs::read(p).ok()?;
     if p.extension().and_then(|e| e.to_str()) == Some("svg") {
-        #[cfg(feature = "full")]
+        #[cfg(feature = "svg-icons")]
         {
             let d = fm8_preview::image_load::render_svg(&data, size).ok()?;
             let f = d.frames.into_iter().next()?;
             return Some(Image::new(f.w, f.h, f.rgba));
         }
-        #[cfg(not(feature = "full"))]
+        #[cfg(not(feature = "svg-icons"))]
         return None;
     }
     let img = fm8_codec::png::decode(&data).ok()?;
     let (w, h) = fm8_codec::resize::fit(img.w, img.h, size);
     let img = if (w, h) != (img.w, img.h) { fm8_codec::resize::resize(&img, w, h, false) } else { img };
     Some(Image::new(img.w, img.h, img.rgba))
+}
+
+/// Monochrome (symbolic) icon recoloured: keep the alpha mask, replace RGB.
+fn tinted(i: &Image, c: [u8; 3]) -> Arc<Image> {
+    let mut v = i.rgba.clone();
+    for p in v.chunks_mut(4) { p[0] = c[0]; p[1] = c[1]; p[2] = c[2]; }
+    Image::new(i.w, i.h, v)
+}
+
+/// Toolbar glyph -> symbolic theme names (action icons).
+pub fn symbolic_names(i: Icon) -> Option<Vec<String>> {
+    let n: &[&str] = match i {
+        Icon::Back => &["go-previous"], Icon::Forward => &["go-next"], Icon::Up => &["go-up"], Icon::Refresh => &["view-refresh"],
+        Icon::List => &["view-list-details", "view-list-text"], Icon::Grid => &["view-list-icons", "view-grid"], Icon::Compact => &["view-list-text", "view-list-compact"],
+        Icon::Split => &["view-split-left-right", "view-dual", "view-right-new"], Icon::Eye => &["view-preview", "document-preview", "view-visible"],
+        Icon::Search => &["edit-find", "system-search"], Icon::Menu => &["open-menu", "application-menu", "configure"],
+        Icon::Plus => &["list-add", "tab-new"], Icon::Close => &["window-close", "tab-close"],
+        _ => return None,
+    };
+    Some(n.iter().flat_map(|s| [format!("{s}-symbolic"), s.to_string()]).collect())
+}
+
+impl IconSet {
+    /// Symbolic action icon tinted to `rgb` (None until rasterised or when the theme lacks it).
+    pub fn symbolic(&mut self, i: Icon, px: f32, rgb: [u8; 3]) -> Option<Arc<Image>> {
+        let names = symbolic_names(i)?;
+        self.get_tinted(move || names, &format!("sym:{i:?}"), px, Some(rgb))
+    }
 }
 
 /// Ids offered by the settings panel: "auto", "builtin", then every installed theme.

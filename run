@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # filem8: build (release, low priority) and open the window. Arguments go to filem8 (e.g. `run --get-icons`).
-# Light build by default (window + images). FM8_FULL=1 adds SVG, audio, glTF, archives.
+# Light build by default (window, images, 3D, SVG icons via resvg). FM8_FULL=1 adds audio, AVIF/WebP, extras.
 # Other knobs: FM8_BACKEND=vulkan|gl|soft  FM8_SCALE=1.5
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"

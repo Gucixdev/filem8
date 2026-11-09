@@ -13,8 +13,10 @@ path = "src/main.rs"
 
 [features]
 # Light build: window, images (incl. AVIF), text/code, OBJ/STL. `full` adds SVG, audio waveform + playback, glTF, archives.
-default = []
-full = ["fm8-preview/full"]
+default = ["svg-icons"]
+# SVG icon/thumbnail rasteriser (resvg): the one heavy dependency kept in the light build, for breeze/Papirus themes.
+svg-icons = ["fm8-preview/svg"]
+full = ["svg-icons", "fm8-preview/full"]
 
 [dependencies]
 fm8-ui = { path = "../fm8-ui" }

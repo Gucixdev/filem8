@@ -199,8 +199,8 @@ impl IconThemes {
     pub fn usable(&mut self, theme: &str, svg: bool) -> bool { self.find(theme, "folder", 48, 1, svg).is_some() && self.find(theme, "text-x-generic", 48, 1, svg).is_some() }
 
     /// Best theme when the setting is "auto": first usable of the preference list, then any installed.
-    pub fn auto(&mut self, svg: bool) -> Option<String> {
-        let prefs = ["Papirus", "Papirus-Dark", "breeze", "breeze-dark", "Adwaita", "AdwaitaLegacy", "hicolor"];
+    pub fn auto(&mut self, svg: bool, dark: bool) -> Option<String> {
+        let prefs: [&str; 7] = if dark { ["breeze-dark", "breeze", "Papirus-Dark", "Papirus", "Adwaita", "AdwaitaLegacy", "hicolor"] } else { ["breeze", "breeze-dark", "Papirus", "Papirus-Dark", "Adwaita", "AdwaitaLegacy", "hicolor"] };
         let have = self.installed();
         for p in prefs { if have.iter().any(|h| h == p) && self.usable(p, svg) { return Some(p.to_string()) } }
         for h in have { if self.usable(&h, svg) { return Some(h) } }

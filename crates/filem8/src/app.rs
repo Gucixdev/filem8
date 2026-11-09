@@ -153,7 +153,7 @@ impl App {
             cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
             rename: None, pending_open: false, settings: None, confirm: None, theme_request: None, bm_rename: None, bm_press: None, bm_drag: None,
         };
-        if real { let th = a.prefs.get("icon_theme"); a.icons.configure(fm8_core::icontheme::default_search_dirs(), &th); }
+        if real { let th = a.prefs.get("icon_theme"); let dark = a.prefs.get("theme") != "light"; a.icons.configure(fm8_core::icontheme::default_search_dirs(), &th, dark); }
         a.refresh_places();
         a.new_tab(start);
         a
@@ -386,6 +386,21 @@ impl App {
     /// Test hook: queue a transfer that stays held (progress panel visible).
     pub fn hold_transfer_for_test(&mut self, paths: Vec<PathBuf>, dest: PathBuf) { self.xfers.push(crate::xfer::Transfer::start_held(paths, dest, true)); }
 
+    pub(crate) fn reconfigure_icons(&mut self) {
+        let dark = self.prefs.get("theme") != "light";
+        self.icons.configure(fm8_core::icontheme::default_search_dirs(), &self.prefs.get("icon_theme"), dark);
+    }
+
+    /// Toolbar button with the theme's symbolic icon (procedural glyph as last fallback).
+    fn tb(&mut self, ui: &mut Ui, id: &str, r: Rect, icon: Icon, tip: &str, enabled: bool, active: bool) -> bool {
+        let t = &ui.theme;
+        let c = if !enabled { t.fg_dim } else if active { t.selection_fg } else { t.fg };
+        ui.icon_img = self.icons.symbolic(icon, 18.0, [c.r, c.g, c.b]);
+        let a = if enabled { 255 } else { 110 };
+        let _ = a;
+        ui.icon_button(Id::new(id), r, icon, tip, enabled, active)
+    }
+
     pub fn transfers_active(&self) -> bool { !self.xfers.is_empty() }
 
     fn poll_xfers(&mut self) -> bool {
@@ -449,9 +464,10 @@ impl App {
                 let dir = self.tabs[ai].model.dir.clone();
                 if !self.memory.map.contains_key(&dir) { self.apply_view(&dir); self.tabs[ai].model.rebuild_view(); }
             }
-            "icon_theme" => self.icons.configure(fm8_core::icontheme::default_search_dirs(), &self.prefs.get("icon_theme")),
+            "icon_theme" => self.reconfigure_icons(),
             "preview" => if !self.prefs.flag("preview") && self.layout == Layout::Preview { self.layout = Layout::Single; },
             "theme" => {
+                if self.prefs.get("icon_theme") == "auto" { self.reconfigure_icons(); }
                 let t = match self.prefs.get("theme").as_str() {
                     "dark" => Theme::dark(),
                     "light" => Theme::light(),
@@ -584,20 +600,20 @@ impl App {
         let f = Size::Fixed(32.0);
         let cells = toolbar.inset_xy(8.0, 7.0).row(4.0, &[f, f, f, f, Size::Fixed(6.0), Size::Flex(1.0), Size::Fixed(6.0), f, f, f, Size::Fixed(6.0), f, f, f]);
         let (can_b, can_f) = (!self.tabs[self.active].back.is_empty(), !self.tabs[self.active].fwd.is_empty());
-        if ui.icon_button(Id::new("back"), cells[0], Icon::Back, "Back (Alt+Left)", can_b, false) { self.go_back(); }
-        if ui.icon_button(Id::new("fwd"), cells[1], Icon::Forward, "Forward (Alt+Right)", can_f, false) { self.go_fwd(); }
-        if ui.icon_button(Id::new("up"), cells[2], Icon::Up, "Parent folder (Alt+Up)", true, false) { self.go_up(); }
-        if ui.icon_button(Id::new("refresh"), cells[3], Icon::Refresh, "Reload (Ctrl+R)", true, false) { self.tabs[self.active].model.reload(); }
+        if self.tb(ui, "back", cells[0], Icon::Back, "Back (Alt+Left)", can_b, false) { self.go_back(); }
+        if self.tb(ui, "fwd", cells[1], Icon::Forward, "Forward (Alt+Right)", can_f, false) { self.go_fwd(); }
+        if self.tb(ui, "up", cells[2], Icon::Up, "Parent folder (Alt+Up)", true, false) { self.go_up(); }
+        if self.tb(ui, "refresh", cells[3], Icon::Refresh, "Reload (Ctrl+R)", true, false) { self.tabs[self.active].model.reload(); }
         self.path_bar(ui, cells[5]);
         let mode = self.tabs[self.active].mode;
-        if ui.icon_button(Id::new("vlist"), cells[7], Icon::List, "Detailed list (Ctrl+1)", true, mode == ViewMode::List) { self.set_mode(ViewMode::List); }
-        if ui.icon_button(Id::new("vgrid"), cells[8], Icon::Grid, "Icons and thumbnails (Ctrl+2)", true, mode == ViewMode::Grid) { self.set_mode(ViewMode::Grid); }
-        if ui.icon_button(Id::new("vcompact"), cells[9], Icon::Compact, "Compact (Ctrl+3)", true, mode == ViewMode::Compact) { self.set_mode(ViewMode::Compact); }
+        if self.tb(ui, "vlist", cells[7], Icon::List, "Detailed list (Ctrl+1)", true, mode == ViewMode::List) { self.set_mode(ViewMode::List); }
+        if self.tb(ui, "vgrid", cells[8], Icon::Grid, "Icons and thumbnails (Ctrl+2)", true, mode == ViewMode::Grid) { self.set_mode(ViewMode::Grid); }
+        if self.tb(ui, "vcompact", cells[9], Icon::Compact, "Compact (Ctrl+3)", true, mode == ViewMode::Compact) { self.set_mode(ViewMode::Compact); }
         let (tip, ic) = match self.layout { Layout::Single => ("Layout: single (F3 for dual pane)", Icon::Split), Layout::Dual => ("Layout: dual pane (F3 for preview)", Icon::Split), Layout::Preview => ("Layout: list + preview (F3 for single)", Icon::Eye) };
-        if ui.icon_button(Id::new("layout"), cells[11], ic, tip, true, self.layout != Layout::Single) { self.cycle_layout(); }
+        if self.tb(ui, "layout", cells[11], ic, tip, true, self.layout != Layout::Single) { self.cycle_layout(); }
         let hidden = self.tabs[self.active].model.show_hidden;
-        if ui.icon_button(Id::new("hidden"), cells[12], Icon::Search, "Show hidden files (Ctrl+H)", true, hidden) { let m = &mut self.tabs[self.active].model; m.show_hidden = !m.show_hidden; m.rebuild_view(); self.remember(); }
-        if ui.icon_button(Id::new("settings"), cells[13], Icon::Menu, "Settings (Ctrl+,)", true, self.settings.is_some()) { self.open_settings(); }
+        if self.tb(ui, "hidden", cells[12], Icon::Search, "Show hidden files (Ctrl+H)", true, hidden) { let m = &mut self.tabs[self.active].model; m.show_hidden = !m.show_hidden; m.rebuild_view(); self.remember(); }
+        if self.tb(ui, "settings", cells[13], Icon::Menu, "Settings (Ctrl+,)", true, self.settings.is_some()) { self.open_settings(); }
         ui.separator(rect(toolbar.x, toolbar.bottom() - 1.0, toolbar.w, 1.0));
     }
 

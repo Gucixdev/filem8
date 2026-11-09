@@ -99,6 +99,8 @@ pub struct Ui {
     pub dt: f32,
     pub mouse: Vec2,
     pub mouse_down: [bool; 3],
+    /// One-shot: the next `icon_button` draws this picture instead of the procedural glyph.
+    pub icon_img: Option<std::sync::Arc<crate::draw::Image>>,
     pub mods: Mods,
     pub frame: Frame,
     pub cursor: Cursor,
@@ -225,6 +227,7 @@ impl Ui {
             dt: 0.016,
             mouse: v2(-1.0, -1.0),
             mouse_down: [false; 3],
+            icon_img: None,
             mods: Mods::default(),
             frame: Frame::default(),
             cursor: Cursor::Default,
@@ -477,7 +480,14 @@ impl Ui {
         self.out().rounded(r, bg, t.radius);
         let fg = if !enabled { t.fg_dim.with_alpha(110) } else if active { t.selection_fg } else { t.fg };
         let ir = r.centered(18.0_f32.min(r.w - 4.0), 18.0_f32.min(r.h - 4.0));
-        self.icon(icon, ir, fg);
+        match self.icon_img.take() {
+            Some(img) => {
+                let k = (ir.w / img.w as f32).min(ir.h / img.h as f32);
+                let (w, h) = (img.w as f32 * k, img.h as f32 * k);
+                self.out().cmds.push(Cmd::Image { r: rect(ir.x + (ir.w - w) / 2.0, ir.y + (ir.h - h) / 2.0, w, h), img, smooth: true });
+            }
+            None => self.icon(icon, ir, fg),
+        }
         if hov && !tip.is_empty() {
             self.tooltip(id, r, tip);
         }
