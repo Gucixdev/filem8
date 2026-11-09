@@ -345,3 +345,26 @@ fn theme_icons_replace_procedural_ones_and_fall_back() {
     for _ in 0..20 { std::thread::sleep(std::time::Duration::from_millis(5)); app.tick(); fb = e.frame(&mut app, &[]); }
     assert_eq!(count(&fb, [255, 0, 0]), 0);
 }
+
+#[test]
+fn search_filter_and_footer_info() {
+    let mut e = env("search");
+    let d = sample(&e.root);
+    let mut app = e.app(&d);
+    e.frame(&mut app, &[]);
+    let all = app.tabs[0].model.view.len();
+    // Ctrl+F opens the filter bar and typing narrows the list
+    let (k, m) = ctrl('f');
+    e.keys(&mut app, k, m);
+    assert!(app.search_open);
+    e.frame(&mut app, &[Event::Text("pic".into())]);
+    e.frame(&mut app, &[]);
+    let names: Vec<String> = app.tabs[0].model.view.iter().map(|&i| app.tabs[0].model.entries[i].name.clone()).collect();
+    assert!(names.len() < all && names.iter().all(|n| n.contains('p') || n.contains('i') || n.contains('c')), "{names:?}");
+    assert!(names.contains(&"pic.png".to_string()));
+    // Escape closes and restores the full list
+    e.keys(&mut app, Key::Escape, none());
+    e.frame(&mut app, &[]);
+    assert!(!app.search_open);
+    assert_eq!(app.tabs[0].model.view.len(), all);
+}

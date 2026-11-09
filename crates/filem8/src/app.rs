@@ -97,6 +97,8 @@ pub struct App {
     bm_press: Option<(usize, Vec2)>,
     bm_drag: Option<usize>,
     pub(crate) xfers: Vec<crate::xfer::Transfer>,
+    /// Filter bar above the list (Ctrl+F / magnifier): fuzzy name filter.
+    pub search_open: bool,
 }
 
 pub fn fmt_time(t: Option<std::time::SystemTime>) -> String {
@@ -150,7 +152,7 @@ impl App {
         let mut a = App {
             tabs: vec![], active: 0, other: None, side: 0, layout: Layout::Single, next_uid: 1, places: vec![], bookmarks, path_edit: None, ctx: None,
             status: String::new(), history: History::default(), memory, prefs, cfg_dir, bm_file, real, quit: false, open_external: vec![], find: String::new(), find_at: 0.0,
-            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
+            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], search_open: false, icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
             rename: None, pending_open: false, settings: None, confirm: None, theme_request: None, bm_rename: None, bm_press: None, bm_drag: None,
         };
         if real { let th = a.prefs.get("icon_theme"); let dark = a.prefs.get("theme") != "light"; a.icons.configure(fm8_core::icontheme::default_search_dirs(), &th, dark); }
@@ -401,6 +403,29 @@ impl App {
         ui.icon_button(Id::new(id), r, icon, tip, enabled, active)
     }
 
+    /// Filter input strip; returns the area left for the list.
+    fn filter_bar(&mut self, ui: &mut Ui, r: Rect) -> Rect {
+        let (bar, rest) = r.cut_top(40.0);
+        let t = ui.theme.clone();
+        ui.icon(Icon::Search, rect(bar.x + 12.0, bar.y + 12.0, 16.0, 16.0), t.fg_dim);
+        let mut buf = self.tabs[self.active].model.filter.clone();
+        let resp = ui.text_input(Id::new("filter-input"), rect(bar.x + 34.0, bar.y + 5.0, bar.w - 46.0, 30.0), &mut buf, "Filter by name (fuzzy), Esc closes");
+        if resp.changed { let m = &mut self.tabs[self.active].model; m.filter = buf; m.rebuild_view(); }
+        if resp.submitted { ui.focus = Some(self.list_id()); }
+        if resp.cancelled { self.close_search(); ui.focus = Some(self.list_id()); }
+        rest
+    }
+
+    fn toggle_search(&mut self, ui: &mut Ui) {
+        if self.search_open { self.close_search(); } else { self.search_open = true; ui.focus = Some(Id::new("filter-input")); }
+    }
+
+    fn close_search(&mut self) {
+        self.search_open = false;
+        let m = &mut self.tabs[self.active].model;
+        if !m.filter.is_empty() { m.filter.clear(); m.rebuild_view(); }
+    }
+
     pub fn transfers_active(&self) -> bool { !self.xfers.is_empty() }
 
     fn poll_xfers(&mut self) -> bool {
@@ -503,6 +528,7 @@ impl App {
         if self.kb(ui, "path") || ui.take_key(|k, m| m.alt && k == Key::Char('d')) { self.path_edit = Some(self.tabs[self.active].model.dir.to_string_lossy().into_owned()); ui.focus = Some(Id::new("pathedit")); }
         if self.kb(ui, "hidden") { let m = &mut self.tabs[self.active].model; m.show_hidden = !m.show_hidden; m.rebuild_view(); self.remember(); }
         if self.kb(ui, "layout") { self.cycle_layout(); }
+        if ui.ctrl_key('f') { self.toggle_search(ui); }
         if self.kb(ui, "rename") { self.start_rename(); if self.rename.is_some() { ui.focus = Some(Id::new("rename")); } }
         if self.kb(ui, "copy") { self.copy_selection(false); }
         if self.kb(ui, "cut") { self.copy_selection(true); }
@@ -526,7 +552,7 @@ impl App {
         }
         if ui.key_pressed(Key::F(6)) { if let Some(d) = self.other_dir() { let s = self.tabs[self.active].model.selection(); self.transfer(&s, &d, false); } }
         if ui.key_pressed(Key::Delete) { self.trash_selection(); }
-        if ui.key_pressed(Key::Escape) { if self.ctx.is_some() { self.ctx = None } else { self.tabs[self.active].model.clear_selection(); } }
+        if ui.key_pressed(Key::Escape) { if self.search_open { self.close_search(); ui.focus = Some(self.list_id()); } else if self.ctx.is_some() { self.ctx = None } else { self.tabs[self.active].model.clear_selection(); } }
     }
 
     pub fn build(&mut self, ui: &mut Ui) {
@@ -586,11 +612,13 @@ impl App {
         let t = ui.theme.clone();
         let (tabbar, rest) = r.cut_top(36.0);
         let titles: Vec<String> = self.tabs.iter().map(|t| t.model.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())).collect();
+        { let c = ui.theme.fg; ui.icon_img = self.icons.symbolic(Icon::Plus, 18.0, [c.r, c.g, c.b]); }
         let tr = ui.tabs(Id::new("tabs").with(pid), tabbar, &titles, self.active, true);
         if let Some(i) = tr.select { self.active = i; }
         if let Some(i) = tr.close { if self.tabs.len() > 1 { self.tabs.remove(i); self.active = self.active.min(self.tabs.len() - 1); } }
         if tr.new { let d = self.tabs[self.active].model.dir.clone(); self.new_tab(d); }
         if self.layout == Layout::Dual && focused { ui.draw().rect(rect(r.x, r.y, r.w, 2.0), t.accent); }
+        let rest = if self.search_open && focused { self.filter_bar(ui, rest) } else { rest };
         self.items_view(ui, rest, focused);
     }
 
@@ -611,8 +639,8 @@ impl App {
         if self.tb(ui, "vcompact", cells[9], Icon::Compact, "Compact (Ctrl+3)", true, mode == ViewMode::Compact) { self.set_mode(ViewMode::Compact); }
         let (tip, ic) = match self.layout { Layout::Single => ("Layout: single (F3 for dual pane)", Icon::Split), Layout::Dual => ("Layout: dual pane (F3 for preview)", Icon::Split), Layout::Preview => ("Layout: list + preview (F3 for single)", Icon::Eye) };
         if self.tb(ui, "layout", cells[11], ic, tip, true, self.layout != Layout::Single) { self.cycle_layout(); }
-        let hidden = self.tabs[self.active].model.show_hidden;
-        if self.tb(ui, "hidden", cells[12], Icon::Search, "Show hidden files (Ctrl+H)", true, hidden) { let m = &mut self.tabs[self.active].model; m.show_hidden = !m.show_hidden; m.rebuild_view(); self.remember(); }
+        let so = self.search_open;
+        if self.tb(ui, "search", cells[12], Icon::Search, "Filter files (Ctrl+F)", true, so) { self.toggle_search(ui); }
         if self.tb(ui, "settings", cells[13], Icon::Menu, "Settings (Ctrl+,)", true, self.settings.is_some()) { self.open_settings(); }
         ui.separator(rect(toolbar.x, toolbar.bottom() - 1.0, toolbar.w, 1.0));
     }
@@ -768,16 +796,32 @@ impl App {
         let m = &self.tabs[self.active].model;
         let sel = m.selection();
         let mut s = format!("{} items", m.view.len());
-        if !sel.is_empty() {
+        if !m.filter.is_empty() { s.push_str(&format!(" (filtered of {})", m.entries.len())); }
+        if sel.len() == 1 {
+            if let Some(e) = m.entries.iter().find(|e| e.path == sel[0]) {
+                let kind = fm8_core::class::class_label(e.class);
+                s = if e.is_dir { format!("\"{}\", {kind}", e.name) } else { format!("\"{}\", {kind}, {}", e.name, human_size(e.size)) };
+            }
+        } else if !sel.is_empty() {
             let bytes: u64 = m.entries.iter().filter(|e| m.selected.contains(&e.path)).map(|e| e.size).sum();
-            s = format!("{} of {} selected, {}", sel.len(), m.view.len(), human_size(bytes));
+            let dirs = m.entries.iter().filter(|e| e.is_dir && m.selected.contains(&e.path)).count();
+            s = format!("{} selected ({} folders), {}", sel.len(), dirs, human_size(bytes));
         }
         if m.loading { s.push_str("  (loading...)"); }
         ui.label(rect(r.x + 14.0, r.y, r.w * 0.4, r.h), &s, t.fg_dim);
         let hint = if self.layout == Layout::Dual { "Tab other pane   F5 copy   F6 move   F2 rename   Del trash" } else { "F2 rename   Ctrl+C/X/V   F3 layout   Ctrl+D bookmark   Ctrl+, settings" };
         let status = self.status.clone();
         let txt = if status.is_empty() { hint } else { &status };
-        let mut right = r.w * 0.6 - 14.0;
+        let mut right = r.w * 0.6 - 14.0 - 96.0;
+        {
+            let hr = rect(r.right() - if self.tabs[self.active].mode == ViewMode::Grid { 134.0 + 92.0 } else { 100.0 }, r.y + 3.0, 86.0, r.h - 6.0);
+            let on = self.tabs[self.active].model.show_hidden;
+            let hov = ui.hovered(hr);
+            if on { ui.draw().rounded(hr, t.selection_bg, 5.0); } else if hov { ui.draw().rounded(hr, t.hover(), 5.0); }
+            ui.label_ex(hr, "Hidden (Ctrl+H)", if on { t.selection_fg } else { t.fg_dim }, false, 0.5);
+            let (clicked, _, _) = ui.interact(Id::new("hidden-toggle"), hr);
+            if clicked { let m = &mut self.tabs[self.active].model; m.show_hidden = !m.show_hidden; m.rebuild_view(); self.remember(); }
+        }
         if self.tabs[self.active].mode == ViewMode::Grid {
             // tile size slider (64..512 px icon edge)
             let sr = rect(r.right() - 134.0, r.y + 4.0, 120.0, r.h - 8.0);
@@ -794,7 +838,7 @@ impl App {
             ui.draw().rounded(rect(kx - 6.0, ty - 6.0, 12.0, 12.0), t.accent, 6.0);
             right -= 140.0;
         }
-        ui.label_ex(rect(r.x + r.w * 0.4, r.y, right, r.h), txt, if self.status.is_empty() { t.fg_dim } else { t.warn }, false, 1.0);
+        ui.label_ex(rect(r.x + r.w * 0.4 - 40.0, r.y, right, r.h), txt, if self.status.is_empty() { t.fg_dim } else { t.warn }, false, 1.0);
     }
 
     fn confirm_dialog(&mut self, ui: &mut Ui) {
