@@ -100,6 +100,13 @@ fn generate(p: &Path, px: u32) -> Option<Thumb> {
             }
             _ => None,
         },
+        Class::Model3d if name.to_lowercase().ends_with(".blend") => {
+            let i = fm8_preview::blend::read_file(p).ok()?;
+            let t = i.thumb.as_ref()?;
+            let (w, h) = fm8_codec::resize::fit(t.w, t.h, px.max(64));
+            let r = if (w, h) == (t.w, t.h) { t.clone() } else { fm8_codec::resize::resize(t, w, h, false) };
+            Some(Thumb { alpha: has_alpha(&r.rgba), img: Image::new(r.w, r.h, r.rgba), info: format!("Blender {}", i.version) })
+        }
         Class::Model3d => match fm8_preview::model::load_mesh(p) {
             Ok(m) => Some(Thumb { img: Image::new(px, px, fm8_preview::model::render(&m, 0.6, px)), info: format!("{} tris", kfmt(m.triangles())), alpha: true }),
             Err(_) => None,

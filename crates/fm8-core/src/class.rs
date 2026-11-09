@@ -130,6 +130,7 @@ pub fn mime_of(name: &str, is_dir: bool) -> &'static str {
         "flatpak" | "flatpakref" => "application/vnd.flatpak", "snap" => "application/vnd.snap", "apk" => "application/vnd.android.package-archive",
         "exe" | "dll" | "msi" => "application/x-msdownload", "so" | "bin" | "run" | "out" => "application/x-executable", "jar" => "application/java-archive",
         "tpz" | "txz" | "tbz2" | "tbz" | "tzst" | "lz" | "lzma" | "cab" | "cpio" | "ar" | "a" | "dmg" | "pkg" => "application/x-compressed-archive",
+        "blend" | "blend1" => "application/x-blender",
         "bz2" => "application/x-bzip2", "iso" => "application/x-iso9660-image",
         "gltf" => "model/gltf+json", "glb" => "model/gltf-binary", "obj" => "model/obj", "stl" => "model/stl",
         "ttf" => "font/ttf", "otf" => "font/otf", "woff" => "font/woff", "woff2" => "font/woff2",
@@ -152,7 +153,7 @@ pub fn mime_sniff(h: &[u8]) -> Option<&'static str> {
     else if s(b"7z\xbc\xaf\x27\x1c") { "application/x-7z-compressed" } else if s(b"BZh") { "application/x-bzip2" } else if s(b"\xfd7zXZ\0") { "application/x-xz" }
     else if s(b"\x28\xb5\x2f\xfd") { "application/zstd" } else if s(b"Rar!") { "application/vnd.rar" } else if at(257, b"ustar") { "application/x-tar" }
     else if s(b"ID3") || (h.len() > 2 && h[0] == 0xff && h[1] & 0xe0 == 0xe0) { "audio/mpeg" } else if s(b"fLaC") { "audio/flac" } else if s(b"OggS") { "audio/ogg" }
-    else if s(b"glTF") { "model/gltf-binary" } else if s(b"\x7fELF") { if at(8, b"AI\x02") || at(8, b"AI\x01") { "application/vnd.appimage" } else { "application/x-executable" } }
+    else if s(b"BLENDER") { "application/x-blender" } else if s(b"glTF") { "model/gltf-binary" } else if s(b"\x7fELF") { if at(8, b"AI\x02") || at(8, b"AI\x01") { "application/vnd.appimage" } else { "application/x-executable" } }
     else if s(b"!<arch>\ndebian-binary") { "application/vnd.debian.binary-package" } else if s(b"\xed\xab\xee\xdb") { "application/x-rpm" } else if s(b"#!") { "application/x-shellscript" }
     else if s(b"wOFF") { "font/woff" } else if s(b"wOF2") { "font/woff2" } else if s(b"\0\x01\0\0\0") || s(b"OTTO") { "font/ttf" }
     else if s(b"SQLite format 3\0") { "application/vnd.sqlite3" } else if s(b"<?xml") || s(b"<svg") { if h.windows(4).take(512).any(|w| w == b"<svg") { "image/svg+xml" } else { "application/xml" } }

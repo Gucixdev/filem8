@@ -182,3 +182,65 @@ pub fn restore_path(orig: &Path) -> Result<(), String> {
     c.sort_by(|a, b| b.deleted.cmp(&a.deleted));
     restore(c.first().ok_or_else(|| format!("{} not found in trash", orig.display()))?)
 }
+
+/// Every trash directory to look at, with the base its `Path=` entries are relative to:
+/// the home trash plus `$topdir/.Trash/$uid` and `$topdir/.Trash-$uid` of each mount.
+pub fn roots() -> Vec<(PathBuf, Option<PathBuf>)> {
+    let mut v = vec![(home_trash(), None)];
+    for m in crate::places::mounts() {
+        for t in [m.path.join(".Trash").join(uid().to_string()), m.path.join(format!(".Trash-{}", uid()))] {
+            if t.join("info").is_dir() && !v.iter().any(|(x, _)| *x == t) { v.push((t, Some(m.path.clone()))); }
+        }
+    }
+    v
+}
+
+/// Items of the given trash directories, newest deletion first.
+pub fn list_roots(roots: &[(PathBuf, Option<PathBuf>)]) -> Vec<TrashItem> {
+    let mut v: Vec<TrashItem> = roots.iter().flat_map(|(t, b)| list_in(t, b.as_deref())).collect();
+    v.sort_by(|a, b| b.deleted.cmp(&a.deleted).then_with(|| a.original.cmp(&b.original)));
+    v
+}
+
+/// Forget a trashed item for good: its data, its `.trashinfo` and its `directorysizes` line.
+pub fn purge(it: &TrashItem) -> Result<(), String> {
+    match fs::symlink_metadata(&it.trashed) {
+        Ok(m) if m.is_dir() => fs::remove_dir_all(&it.trashed),
+        Ok(_) => fs::remove_file(&it.trashed),
+        Err(_) => Ok(()),
+    }
+    .map_err(|e| format!("{}: {e}", it.trashed.display()))?;
+    let _ = fs::remove_file(&it.info);
+    if let (Some(files), Some(name)) = (it.trashed.parent(), it.trashed.file_name().and_then(|n| n.to_str())) {
+        if let Some(trash) = files.parent() {
+            let f = trash.join("directorysizes");
+            if let Ok(txt) = fs::read_to_string(&f) {
+                let enc = encode(name);
+                let keep: Vec<&str> = txt.lines().filter(|l| l.splitn(3, ' ').nth(2) != Some(enc.as_str())).collect();
+                if keep.len() != txt.lines().count() { let _ = fs::write(&f, keep.iter().map(|l| format!("{l}\n")).collect::<String>()); }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Restore to a different path than the recorded one (used on name conflicts).
+pub fn restore_to(it: &TrashItem, dest: &Path) -> Result<(), String> {
+    if dest.symlink_metadata().is_ok() { return Err(format!("{} already exists", dest.display())); }
+    if let Some(par) = dest.parent() { fs::create_dir_all(par).map_err(|e| e.to_string())?; }
+    fs::rename(&it.trashed, dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    let _ = purge(it);
+    Ok(())
+}
+
+/// `dir/name` or `dir/name (restored)`, `dir/name (restored 2)` ... that does not exist yet.
+pub fn free_name(p: &Path) -> PathBuf {
+    let (dir, name) = (p.parent().unwrap_or(Path::new("/")), p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    let (stem, ext) = match name.rfind('.') { Some(i) if i > 0 => (&name[..i], &name[i..]), _ => (name.as_str(), "") };
+    let mut n = 1;
+    loop {
+        let c = dir.join(if n == 1 { format!("{stem} (restored){ext}") } else { format!("{stem} (restored {n}){ext}") });
+        if c.symlink_metadata().is_err() { return c; }
+        n += 1;
+    }
+}

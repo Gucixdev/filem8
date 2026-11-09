@@ -252,6 +252,7 @@ pub fn names_for_place(kind: &str) -> Vec<String> {
         "pictures" => &["folder-pictures", "folder"],
         "videos" => &["folder-videos", "folder"],
         "trash" => &["user-trash", "folder-trash", "folder"],
+        "trash-full" => &["user-trash-full", "folder-trash", "user-trash", "folder"],
         "disk" => &["drive-harddisk", "drive-removable-media", "folder"],
         "root" => &["drive-harddisk", "folder"],
         "bookmark" => &["folder-bookmark", "bookmark-new", "folder"],

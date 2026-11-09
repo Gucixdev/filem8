@@ -2,6 +2,7 @@
 //! All loaders are pure (path in, data out) so they run on worker threads and
 //! are testable without a window.
 pub mod archive;
+pub mod blend;
 #[cfg(feature = "audio")]
 pub mod audio;
 pub mod json;
@@ -99,6 +100,7 @@ pub fn load(path: &Path, o: &Opts) -> Preview {
         Class::Archive => archive::load(path, &name),
         #[cfg(feature = "audio")]
         Class::Audio => audio::load(path),
+        Class::Model3d if ext == "blend" => blend::load(path),
         Class::Model3d => model::load(path),
         Class::Pdf => pdf::load(path, o),
         _ => {
