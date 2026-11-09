@@ -367,3 +367,22 @@ fn thumbcache_md5_and_uri() {
     // verified against coreutils md5sum
     assert_eq!(hex(&md5(b"file:///home/jens/photo%20(1).jpg")), "3198457a3d8a542d80c87dd86a6a5019");
 }
+
+#[test]
+fn package_mimes_and_icon_families() {
+    use fm8_core::class::{mime_of, mime_sniff};
+    use fm8_core::icontheme::names_for_mime;
+    assert_eq!(mime_of("a.deb", false), "application/vnd.debian.binary-package");
+    assert_eq!(mime_of("a.AppImage", false), "application/vnd.appimage");
+    assert_eq!(mime_of("a.tpz", false), "application/x-compressed-archive");
+    let mut elf = b"\x7fELF".to_vec(); elf.extend_from_slice(&[0; 4]); elf.extend_from_slice(b"AI\x02");
+    assert_eq!(mime_sniff(&elf), Some("application/vnd.appimage"));
+    assert_eq!(mime_sniff(b"\x7fELF\x02\x01\x01\0\0\0\0\0"), Some("application/x-executable"));
+    assert_eq!(mime_sniff(b"!<arch>\ndebian-binary   "), Some("application/vnd.debian.binary-package"));
+    for (m, fam) in [("application/vnd.debian.binary-package", "package-x-generic"), ("application/vnd.appimage", "application-x-executable"), ("application/x-compressed-archive", "package-x-generic")] {
+        let n = names_for_mime(m);
+        assert!(n.iter().any(|x| x == fam), "{m}: {n:?}");
+        assert_eq!(n.last().unwrap(), "unknown");
+        assert!(n.iter().position(|x| x == fam) < n.iter().position(|x| x == "unknown"));
+    }
+}

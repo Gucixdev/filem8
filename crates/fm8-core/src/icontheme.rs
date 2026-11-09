@@ -220,7 +220,8 @@ pub fn names_for_mime(mime: &str) -> Vec<String> {
         ("text", "html") => "text-html",
         ("application", "pdf") => "x-office-document",
         ("application", "zip" | "gzip" | "x-tar" | "x-7z-compressed" | "x-xz" | "x-bzip2" | "zstd" | "vnd.rar" | "epub+zip") => "package-x-generic",
-        ("application", "x-shellscript" | "x-executable") => "application-x-executable",
+        ("application", "x-shellscript" | "x-executable" | "x-msdownload" | "vnd.appimage" | "x-sharedlib" | "x-ms-dos-executable" | "vnd.microsoft.portable-executable") => "application-x-executable",
+        ("application", s) if s.contains("package") || s.contains("rpm") || s.contains("flatpak") || s.contains("snap") || s.contains("archive") || s.contains("java-archive") || s.contains("compressed") => "package-x-generic",
         ("application", s) if s.contains("msword") || s.contains("opendocument.text") => "x-office-document",
         ("application", s) if s.contains("ms-excel") || s.contains("spreadsheet") => "x-office-spreadsheet",
         ("model", _) => "model",
@@ -233,6 +234,8 @@ pub fn names_for_mime(mime: &str) -> Vec<String> {
     };
     v.push(generic.into());
     if media == "text" { v.push("text-x-generic".into()) }
+    // family fallbacks before the "?" icon
+    v.push("application-x-generic".into());
     v.push("unknown".into());
     v.dedup();
     v
