@@ -75,7 +75,7 @@ pub fn decode_dib(dib: &[u8], data_off: usize, ico: bool) -> Result<Image, Strin
             img.rgba[(oy(y) * w + x) * 4..][..4].copy_from_slice(&c);
         }
     }
-    if bpp == 32 && !any_alpha { for p in img.rgba.chunks_exact_mut(4) { p[3] = 255 } }
+    if bpp == 32 && !any_alpha { for p in img.rgba.as_chunks_mut::<4>().0 { p[3] = 255 } }
     if ico {
         // 1-bit AND mask follows the colour data (only when no alpha was present)
         let mrb = w.div_ceil(32) * 4;

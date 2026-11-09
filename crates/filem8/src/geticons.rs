@@ -47,7 +47,7 @@ fn ask(q: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> bool {
 
 /// Run the interactive flow; returns the process exit code.
 pub fn run(input: &mut dyn BufRead, out: &mut dyn Write, data_home: &Path, can_svg: bool) -> i32 {
-    let mut themes = fm8_core::icontheme::IconThemes::system();
+    let themes = fm8_core::icontheme::IconThemes::system();
     let have = themes.installed();
     let _ = writeln!(out, "Installed icon themes: {}", if have.is_empty() { "none".into() } else { have.join(", ") });
     let usable: Vec<&String> = have.iter().filter(|t| { let mut t2 = fm8_core::icontheme::IconThemes::system(); t2.usable(t, can_svg) }).collect();

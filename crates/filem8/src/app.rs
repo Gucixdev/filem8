@@ -426,6 +426,8 @@ impl App {
         if !m.filter.is_empty() { m.filter.clear(); m.rebuild_view(); }
     }
 
+    pub fn thumbs_busy(&self) -> bool { self.thumbs.busy() }
+
     pub fn transfers_active(&self) -> bool { !self.xfers.is_empty() }
 
     fn poll_xfers(&mut self) -> bool {
@@ -661,7 +663,7 @@ impl App {
             // completion hints
             if let Some(s) = &self.path_edit {
                 let sug = paths::complete(s, 6);
-                if !sug.is_empty() && s.len() > 0 {
+                if !sug.is_empty() && !s.is_empty() {
                     ui.begin_overlay();
                     let h = sug.len() as f32 * 26.0 + 8.0;
                     let pr = rect(r.x, r.bottom() + 4.0, r.w, h);

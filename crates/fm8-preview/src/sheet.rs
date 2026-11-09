@@ -77,7 +77,7 @@ fn tiled(v: &Value) -> Preview {
     let cell = (800 / mw.max(mh)).clamp(2, 24);
     let (iw, ih) = (mw * cell, mh * cell);
     let mut rgba = vec![0u8; (iw * ih * 4) as usize];
-    for px in rgba.chunks_exact_mut(4) { px.copy_from_slice(&[24, 26, 32, 255]); }
+    for px in rgba.as_chunks_mut::<4>().0 { px.copy_from_slice(&[24, 26, 32, 255]); }
     let layers = v["layers"].as_array().unwrap();
     let mut tile_layers = 0;
     for l in layers {

@@ -257,17 +257,23 @@ fn parse_size(s: &str) -> (u32, u32) {
     s.split_once('x').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))).unwrap_or((1100, 700))
 }
 
-/// `filem8 --screenshot OUT.png [DIR] [WxH] [SCALE]`: headless render of the same UI.
+/// `filem8 --screenshot OUT.png [DIR] [WxH] [SCALE] [VIEW]`: headless render of the same UI.
 fn screenshot(args: &[String]) -> Result<(), String> {
-    let out = args.first().ok_or("usage: --screenshot OUT.png [DIR] [WxH] [SCALE]")?;
+    let out = args.first().ok_or("usage: --screenshot OUT.png [DIR] [WxH] [SCALE] [list|grid|compact]")?;
     let dir = args.get(1).map(std::path::PathBuf::from).unwrap_or_else(fm8_core::paths::home);
     let (w, h) = args.get(2).map(|s| parse_size(s)).unwrap_or((1100, 700));
     let scale: f32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1.0);
-    let mut app = App::new(dir, false);
-    for _ in 0..200 { app.tick(); if !app.tabs[0].model.loading { break; } std::thread::sleep(Duration::from_millis(10)); }
-    app.tick();
+    // real theme icons and thumbnails: give the worker threads time, drawing frames meanwhile
+    let mut app = App::new_in(dir, None, None, true);
+    match args.get(4).map(|s| s.as_str()) { Some("grid" | "tiles") => app.set_mode(fm8_core::settings::ViewMode::Grid), Some("compact") => app.set_mode(fm8_core::settings::ViewMode::Compact), _ => {} }
     let mut ui = Ui::new(Theme::dark());
-    let fb = render_frame(&mut ui, w, h, scale, 0.0, &[], |ui| app.build(ui));
+    let mut fb = render_frame(&mut ui, w, h, scale, 0.0, &[], |ui| app.build(ui));
+    for i in 0..120 {
+        app.tick();
+        std::thread::sleep(Duration::from_millis(25));
+        fb = render_frame(&mut ui, w, h, scale, i as f64 * 0.025, &[], |ui| app.build(ui));
+        if i > 8 && !app.tabs[0].model.loading && !app.icons.busy() && !app.thumbs_busy() { break; }
+    }
     fb.save_png(std::path::Path::new(out))
 }
 
@@ -279,10 +285,10 @@ fn main() {
     }
     if args.first().map(|s| s == "--get-icons").unwrap_or(false) {
         let stdin = std::io::stdin();
-        std::process::exit(filem8::geticons::run(&mut stdin.lock(), &mut std::io::stdout(), &filem8::geticons::data_home(), cfg!(feature = "full")));
+        std::process::exit(filem8::geticons::run(&mut stdin.lock(), &mut std::io::stdout(), &filem8::geticons::data_home(), cfg!(any(feature = "svg-icons", feature = "full"))));
     }
     if args.first().map(|s| s == "--help" || s == "-h").unwrap_or(false) {
-        println!("filem8 [DIR]\n  --screenshot OUT.png [DIR] [WxH] [SCALE]   headless render\n  --get-icons                                 list/download an open icon theme (asks first)");
+        println!("filem8 [DIR]\n  --screenshot OUT.png [DIR] [WxH] [SCALE] [list|grid|compact]   headless render\n  --get-icons                                 list/download an open icon theme (asks first)");
         return;
     }
     let theme_file = fm8_core::settings::config_dir().join("theme");

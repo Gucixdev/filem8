@@ -33,8 +33,8 @@ impl Dir {
         let _ = want;
         match self.ty {
             DirType::Fixed => (self.size * self.scale).abs_diff(s),
-            DirType::Scalable => { let (lo, hi) = (self.min * self.scale, self.max * self.scale); if s < lo { lo - s } else if s > hi { s - hi } else { 0 } }
-            DirType::Threshold => { let (lo, hi) = ((self.size - self.threshold.min(self.size)) * self.scale, (self.size + self.threshold) * self.scale); if s < lo { lo - s } else if s > hi { s - hi } else { 0 } }
+            DirType::Scalable => { let (lo, hi) = (self.min * self.scale, self.max * self.scale); if s < lo { lo - s } else { s.saturating_sub(hi) } }
+            DirType::Threshold => { let (lo, hi) = ((self.size - self.threshold.min(self.size)) * self.scale, (self.size + self.threshold) * self.scale); if s < lo { lo - s } else { s.saturating_sub(hi) } }
         }
     }
 }

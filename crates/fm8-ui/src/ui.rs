@@ -562,7 +562,7 @@ impl Ui {
         if focused {
             self.typing_now = true;
             let to_byte = |s: &str, ci: usize| s.char_indices().nth(ci).map(|(b, _)| b).unwrap_or(s.len());
-            let keys: Vec<(Key, Mods)> = self.frame.keys.drain(..).collect();
+            let keys: Vec<(Key, Mods)> = std::mem::take(&mut self.frame.keys);
             let mut rest = vec![];
             for (k, m) in keys {
                 let (lo, hi) = (cur.min(anc), cur.max(anc));
@@ -622,7 +622,7 @@ impl Ui {
             }
             self.out().text(inner.x, ty, text, size, t.fg, false);
         }
-        if focused && ((self.time * 1.8) as u64) % 2 == 0 {
+        if focused && ((self.time * 1.8) as u64).is_multiple_of(2) {
             let cx = inner.x + text::measure(&text.chars().take(cur).collect::<String>(), size, false);
             self.out().rect(rect(cx, ty, 1.5, text::line_height(size, false)), t.fg);
         }
@@ -703,7 +703,7 @@ impl Ui {
         let hovered = if hov { hit(self.mouse) } else { None };
         let on_sb = show_sb && sb.contains(self.mouse);
         if hov && !on_sb {
-            for (b, press) in self.frame.press.clone().into_iter().enumerate() {
+            for (b, press) in self.frame.press.into_iter().enumerate() {
                 if !press { continue; }
                 self.focus = Some(id);
                 self.focus_claimed = true;
@@ -730,7 +730,7 @@ impl Ui {
             }
         }
         if self.focus == Some(id) && !self.typing {
-            let keys: Vec<(Key, Mods)> = self.frame.keys.drain(..).collect();
+            let keys: Vec<(Key, Mods)> = std::mem::take(&mut self.frame.keys);
             let mut rest = vec![];
             for (k, m) in keys {
                 let nav = match k {

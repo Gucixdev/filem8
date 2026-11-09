@@ -49,7 +49,7 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
         img.rgba[o..o + 4].copy_from_slice(&[sc(r), sc(g), sc(bb), sc(a)]);
     };
     match kind {
-        b'1' => for i in 0..n { let v = t.num().ok_or_else(bad)?; set(i, &[1 - v.min(1) * 1]); }
+        b'1' => for i in 0..n { let v = t.num().ok_or_else(bad)?; set(i, &[1 - v.min(1)]); }
         b'2' | b'3' => for i in 0..n { let mut s = [0; 3]; for c in 0..depth as usize { s[c] = t.num().ok_or_else(bad)?; } set(i, &s[..depth as usize]); }
         b'4' => {
             let d = &b[(t.p + 1).min(b.len())..];

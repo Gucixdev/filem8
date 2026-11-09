@@ -152,7 +152,7 @@ impl App {
         } else {
             ui.draw().text(content.x, content.y, "Click a shortcut, then press the new keys. Esc cancels.", 12.0, t.fg_dim, false);
             if let Some(a) = st.capture {
-                let keys: Vec<(Key, Mods)> = ui.frame.keys.drain(..).collect();
+                let keys: Vec<(Key, Mods)> = std::mem::take(&mut ui.frame.keys);
                 for (k, m) in keys {
                     if k == Key::Escape { st.capture = None; break; }
                     if let Some(s) = bind_text(k, m) {

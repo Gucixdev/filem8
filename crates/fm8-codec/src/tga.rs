@@ -11,7 +11,7 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
     if w == 0 || h == 0 { return Err("tga: bad size".into()) }
     let rle = ty >= 8;
     let kind = ty & 7;
-    if !matches!(kind, 1 | 2 | 3) || !matches!(bpp, 8 | 15 | 16 | 24 | 32) { return Err("tga: unsupported".into()) }
+    if !matches!(kind, 1..=3) || !matches!(bpp, 8 | 15 | 16 | 24 | 32) { return Err("tga: unsupported".into()) }
     let mut p = 18 + idlen;
     let conv = |d: &[u8], bits: usize| -> [u8; 4] {
         match bits {

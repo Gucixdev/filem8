@@ -100,7 +100,7 @@ pub fn render_svg(data: &[u8], max: u32) -> Result<ImageData, String> {
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
     // tiny-skia is premultiplied; demultiply
     let mut rgba = pm.take();
-    for p in rgba.chunks_exact_mut(4) {
+    for p in rgba.as_chunks_mut::<4>().0 {
         let a = p[3] as u32;
         if a > 0 && a < 255 {
             for c in &mut p[..3] { *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8; }

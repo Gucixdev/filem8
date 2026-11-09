@@ -27,7 +27,7 @@ impl Framebuffer {
         f
     }
     pub fn clear(&mut self, c: Color) {
-        for p in self.px.chunks_exact_mut(4) {
+        for p in self.px.as_chunks_mut::<4>().0 {
             p.copy_from_slice(&[c.r, c.g, c.b, 255]);
         }
     }
@@ -235,6 +235,6 @@ impl Framebuffer {
         if self.w != o.w || self.h != o.h {
             return usize::MAX;
         }
-        self.px.chunks_exact(4).zip(o.px.chunks_exact(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > tol)).count()
+        self.px.as_chunks::<4>().0.iter().zip(o.px.chunks_exact(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > tol)).count()
     }
 }
