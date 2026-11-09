@@ -50,10 +50,11 @@ pub(crate) enum Ctx {
     Empty,
     Columns,
     Bookmark(usize),
+    Trash,
 }
 
 #[derive(Clone, Copy)]
-enum Act { Open, NewTab, AddBookmark, Rename, Copy, Cut, Paste, PasteInto, Trash, CopyOther, MoveOther, NewFolder, Reload, SelectAll, Col(usize), BmRename, BmUp, BmDown, BmRemove, Nop }
+enum Act { Open, NewTab, AddBookmark, Rename, Copy, Cut, Paste, PasteInto, Trash, CopyOther, MoveOther, NewFolder, Reload, SelectAll, Col(usize), BmRename, BmUp, BmDown, BmRemove, TrRestore, TrDelete, TrEmpty, Nop }
 
 pub(crate) struct Drag { pub paths: Vec<PathBuf> }
 
@@ -99,6 +100,11 @@ pub struct App {
     pub(crate) xfers: Vec<crate::xfer::Transfer>,
     /// Filter bar above the list (Ctrl+F / magnifier): fuzzy name filter.
     pub search_open: bool,
+    /// Trash view (a virtual place) while open in the focused pane.
+    pub(crate) trash: Option<crate::trash_ui::TrashView>,
+    pub(crate) trash_dlg: Option<crate::trash_ui::TrashDlg>,
+    pub(crate) trash_roots: Vec<(PathBuf, Option<PathBuf>)>,
+    pub(crate) trash_place: bool,
 }
 
 pub fn fmt_time(t: Option<std::time::SystemTime>) -> String {
@@ -152,9 +158,10 @@ impl App {
         let mut a = App {
             tabs: vec![], active: 0, other: None, side: 0, layout: Layout::Single, next_uid: 1, places: vec![], bookmarks, path_edit: None, ctx: None,
             status: String::new(), history: History::default(), memory, prefs, cfg_dir, bm_file, real, quit: false, open_external: vec![], find: String::new(), find_at: 0.0,
-            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], search_open: false, icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
+            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], search_open: false, trash: None, trash_dlg: None, trash_roots: vec![(fm8_core::trashbin::home_trash(), None)], trash_place: false, icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
             rename: None, pending_open: false, settings: None, confirm: None, theme_request: None, bm_rename: None, bm_press: None, bm_drag: None,
         };
+        if real { a.trash_roots = fm8_core::trashbin::roots(); a.trash_place = true; }
         if real { let th = a.prefs.get("icon_theme"); let dark = a.prefs.get("theme") != "light"; a.icons.configure(fm8_core::icontheme::default_search_dirs(), &th, dark); }
         a.refresh_places();
         a.new_tab(start);
@@ -169,6 +176,11 @@ impl App {
                 let icon = match b.label.as_str() { "Desktop" => Icon::Desktop, "Documents" => Icon::Document, "Downloads" => Icon::Download, "Music" => Icon::Music, "Pictures" => Icon::Picture, _ => Icon::Folder };
                 if b.path.is_dir() { v.push(Place::Item { label: b.label, path: b.path, icon, sub: String::new(), bm: None }); }
             }
+        }
+        if self.trash_place {
+            let (n, b) = self.trash_stats();
+            let sub = if n == 0 { "empty".to_string() } else { format!("{n} item(s), {}", human_size(b)) };
+            v.push(Place::Item { label: "Trash".into(), path: crate::trash_ui::sentinel(), icon: Icon::Trash, sub, bm: None });
         }
         v.push(Place::Header("BOOKMARKS"));
         let shown: Vec<PathBuf> = v.iter().filter_map(|p| if let Place::Item { path, .. } = p { Some(path.clone()) } else { None }).collect();
@@ -268,6 +280,7 @@ impl App {
     }
 
     pub fn goto(&mut self, dir: PathBuf, record: bool) {
+        if dir == crate::trash_ui::sentinel() { self.open_trash(); return; }
         let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
         if !dir.is_dir() { self.status = format!("Not a folder: {}", dir.display()); return; }
         let t = &mut self.tabs[self.active];
@@ -277,6 +290,7 @@ impl App {
     }
 
     fn enter(&mut self, dir: PathBuf) {
+        self.trash = None;
         let t = &mut self.tabs[self.active];
         t.model.navigate(dir.clone());
         t.nav += 1;
@@ -334,7 +348,7 @@ impl App {
 
     fn do_trash(&mut self, sel: Vec<PathBuf>) {
         match fileops::trash(&sel) {
-            Ok(op) => { self.status = format!("Moved {} item(s) to trash (Ctrl+Z undoes)", sel.len()); self.history.push(op); self.reload_all(); }
+            Ok(op) => { self.status = format!("Moved {} item(s) to trash (Ctrl+Z undoes)", sel.len()); self.history.push(op); self.reload_all(); self.refresh_places(); }
             Err(e) => self.status = format!("Trash failed: {e}"),
         }
     }
@@ -479,6 +493,7 @@ impl App {
             if n > 0 { self.save_bookmarks(); self.status = format!("{n} bookmark(s) added"); }
             return;
         }
+        if target == crate::trash_ui::sentinel() { self.do_trash(paths); self.trash_reload(); return; }
         self.transfer(&paths, target, copy);
     }
 
@@ -525,6 +540,7 @@ impl App {
     }
 
     fn shortcuts(&mut self, ui: &mut Ui) {
+        if self.trash.is_some() { self.trash_keys(ui); }
         if self.kb(ui, "new_tab") { let d = self.tabs[self.active].model.dir.clone(); self.new_tab(d); }
         if self.kb(ui, "close_tab") && self.tabs.len() > 1 { self.tabs.remove(self.active); self.active = self.active.min(self.tabs.len() - 1); }
         if self.kb(ui, "path") || ui.take_key(|k, m| m.alt && k == Key::Char('d')) { self.path_edit = Some(self.tabs[self.active].model.dir.to_string_lossy().into_owned()); ui.focus = Some(Id::new("pathedit")); }
@@ -562,9 +578,10 @@ impl App {
         self.drops.clear();
         let full = rect(0.0, 0.0, ui.size.x, ui.size.y);
         ui.draw().rect(full, t.bg);
-        let modal = self.settings.is_some() || self.confirm.is_some();
+        let modal = self.settings.is_some() || self.confirm.is_some() || self.trash_dlg.is_some();
         if self.settings.is_some() { self.settings_panel(ui); }
         if self.confirm.is_some() { self.confirm_dialog(ui); }
+        if self.trash_dlg.is_some() { self.trash_dialog(ui); }
         if modal { ui.frame.keys.clear(); }
         else if !ui.typing { self.shortcuts(ui); }
         if std::mem::take(&mut self.pending_open) { self.open_cursor(); }
@@ -593,7 +610,7 @@ impl App {
             Layout::Preview => {
                 let (a, b) = ui.split(Id::new("pvsplit"), main, Axis::Horizontal, 0.58, 280.0);
                 self.pane_at(ui, a, 0, 1);
-                let target = { let tb = &self.tabs[self.active]; tb.model.cursor.and_then(|c| tb.model.entry(c)).map(|e| e.path.clone()) };
+                let target = if let Some(v) = &self.trash { v.rows.get(v.cursor).map(|r| r.it.trashed.clone()) } else { let tb = &self.tabs[self.active]; tb.model.cursor.and_then(|c| tb.model.entry(c)).map(|e| e.path.clone()) };
                 self.preview.set(target);
                 self.preview.draw(ui, b);
             }
@@ -613,13 +630,15 @@ impl App {
     fn pane(&mut self, ui: &mut Ui, r: Rect, focused: bool, pid: u64) {
         let t = ui.theme.clone();
         let (tabbar, rest) = r.cut_top(36.0);
-        let titles: Vec<String> = self.tabs.iter().map(|t| t.model.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())).collect();
+        let mut titles: Vec<String> = self.tabs.iter().map(|t| t.model.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())).collect();
+        if self.trash.is_some() && focused { titles[self.active] = "Trash".into(); }
         { let c = ui.theme.fg; ui.icon_img = self.icons.symbolic(Icon::Plus, 18.0, [c.r, c.g, c.b]); }
         let tr = ui.tabs(Id::new("tabs").with(pid), tabbar, &titles, self.active, true);
         if let Some(i) = tr.select { self.active = i; }
         if let Some(i) = tr.close { if self.tabs.len() > 1 { self.tabs.remove(i); self.active = self.active.min(self.tabs.len() - 1); } }
         if tr.new { let d = self.tabs[self.active].model.dir.clone(); self.new_tab(d); }
         if self.layout == Layout::Dual && focused { ui.draw().rect(rect(r.x, r.y, r.w, 2.0), t.accent); }
+        if self.trash.is_some() && focused { self.trash_view(ui, rest); return; }
         let rest = if self.search_open && focused { self.filter_bar(ui, rest) } else { rest };
         self.items_view(ui, rest, focused);
     }
@@ -677,7 +696,7 @@ impl App {
             return;
         }
         ui.draw().rounded(r, t.bg_alt, t.radius);
-        let crumbs = paths::breadcrumbs(&self.tabs[self.active].model.dir);
+        let crumbs = if self.trash.is_some() { vec![("Trash".to_string(), crate::trash_ui::sentinel())] } else { paths::breadcrumbs(&self.tabs[self.active].model.dir) };
         let mut x = r.x + 6.0;
         let last = crumbs.len() - 1;
         let mut go: Option<PathBuf> = None;
@@ -709,7 +728,7 @@ impl App {
         let t = ui.theme.clone();
         ui.draw().rect(r, t.bg_alt);
         ui.draw().rect(rect(r.right() - 1.0, r.y, 1.0, r.h), t.border);
-        let cur = self.tabs[self.active].model.dir.clone();
+        let cur = if self.trash.is_some() { crate::trash_ui::sentinel() } else { self.tabs[self.active].model.dir.clone() };
         let dragging = self.drag.is_some();
         if dragging { self.drops.push((r, PathBuf::new())); }
         let mut y = r.y + 8.0;
@@ -734,7 +753,7 @@ impl App {
                     if active { ui.draw().rounded(ir, t.selection_bg, t.radius); } else if hov { ui.draw().rounded(ir, t.hover(), t.radius); }
                     let fg = if active { t.selection_fg } else { t.fg };
                     let ar = rect(ir.x + 10.0, ir.y + (32.0 - 18.0) / 2.0, 18.0, 18.0);
-                    let themed = self.icons.for_icon(*icon, ar.w);
+                    let themed = if *path == crate::trash_ui::sentinel() && !sub.starts_with("empty") { self.icons.get(|| fm8_core::icontheme::names_for_place("trash-full"), "place:trash-full", ar.w) } else { self.icons.for_icon(*icon, ar.w) };
                     if !self.icons.draw(ui, themed, ar) { ui.icon2(*icon, ar, if active { fg } else { t.fg_dim }, t.bg_alt); }
                     let lr = rect(ir.x + 38.0, ir.y, ir.w - 44.0, 32.0);
                     let renaming = matches!((&self.bm_rename, bm), (Some((i, _)), Some(b)) if i == b);
@@ -788,7 +807,7 @@ impl App {
             ui.focus = None;
         }
         if let Some(c) = ctx { self.ctx = Some((ui.mouse, c)); }
-        if self.bm_drag.is_none() { if let Some((p, nt)) = go { if nt { self.new_tab(p) } else { self.goto(p, true) } } }
+        if self.bm_drag.is_none() { if let Some((p, nt)) = go { if nt && p != crate::trash_ui::sentinel() { self.new_tab(p) } else { self.goto(p, true) } } }
     }
 
     fn status_bar(&mut self, ui: &mut Ui, r: Rect) {
@@ -798,6 +817,10 @@ impl App {
         let m = &self.tabs[self.active].model;
         let sel = m.selection();
         let mut s = format!("{} items", m.view.len());
+        if let Some(v) = &self.trash {
+            let ps = self.trash_picked();
+            s = if ps.is_empty() { format!("Trash: {} item(s), {}", v.rows.len(), human_size(v.total)) } else { format!("{} of {} selected", ps.len(), v.rows.len()) };
+        }
         if !m.filter.is_empty() { s.push_str(&format!(" (filtered of {})", m.entries.len())); }
         if sel.len() == 1 {
             if let Some(e) = m.entries.iter().find(|e| e.path == sel[0]) {
@@ -910,6 +933,13 @@ impl App {
             Ctx::Columns => {
                 for (i, c) in self.cols.iter().enumerate() { items.push((MenuItem::new(&format!("[{}] {}", if c.on { "x" } else { " " }, c.id.label()), ""), Act::Col(i))); }
             }
+            Ctx::Trash => {
+                let has = !self.trash_picked().is_empty();
+                items.push((if has { MenuItem::new("Restore", "Enter") } else { MenuItem::new("Restore", "").disabled() }, Act::TrRestore));
+                items.push((if has { MenuItem::new("Delete permanently", "Del") } else { MenuItem::new("Delete permanently", "").disabled() }, Act::TrDelete));
+                items.push((MenuItem::sep(), Act::Nop));
+                items.push((if self.trash_rows() > 0 { MenuItem::new("Empty trash", "Ctrl+Shift+Del") } else { MenuItem::new("Empty trash", "").disabled() }, Act::TrEmpty));
+            }
             Ctx::Bookmark(i) => {
                 items.push((MenuItem::new("Open", ""), Act::Open));
                 items.push((MenuItem::new("Open in new tab", ""), Act::NewTab));
@@ -946,6 +976,9 @@ impl App {
                     Act::BmUp => if let Ctx::Bookmark(b) = c { if b > 0 { self.bookmarks.swap(b, b - 1); self.save_bookmarks(); } },
                     Act::BmDown => if let Ctx::Bookmark(b) = c { if b + 1 < self.bookmarks.len() { self.bookmarks.swap(b, b + 1); self.save_bookmarks(); } },
                     Act::BmRemove => if let Ctx::Bookmark(b) = c { if b < self.bookmarks.len() { self.bookmarks.remove(b); self.save_bookmarks(); self.status = "Bookmark removed".into(); } },
+                    Act::TrRestore => { let p = self.trash_picked(); self.trash_restore(p); }
+                    Act::TrDelete => self.trash_ask_delete(),
+                    Act::TrEmpty => self.trash_ask_empty(),
                     Act::Nop => {}
                 }
             }
