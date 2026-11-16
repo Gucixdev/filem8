@@ -70,6 +70,8 @@ impl Doc<'_> {
         let buf = self.bufs.get(bv.get("buffer")?.as_u64()? as usize)?;
         let start = num(bv.get("byteOffset"), 0.0) as usize + num(acc.get("byteOffset"), 0.0) as usize;
         let stride = match num(bv.get("byteStride"), 0.0) as usize { 0 => size * comps, s => s };
+        // every row needs its bytes in the buffer: a count the buffer cannot hold is a broken file, not a reason to allocate
+        if count.checked_mul(comps * size)? > buf.len() { return None }
         let mut out = Vec::with_capacity(count * comps);
         for i in 0..count {
             for c in 0..comps {
@@ -86,9 +88,10 @@ impl Doc<'_> {
         Some(out)
     }
 
-    fn walk(&self, ni: usize, parent: M4, depth: u32, m: &mut Mesh) {
+    /// `seen` marks visited nodes: a glTF scene is a tree, so a node reached twice is a cycle or a shared child.
+    fn walk(&self, ni: usize, parent: M4, depth: u32, m: &mut Mesh, seen: &mut Vec<bool>) {
         let Some(n) = self.list("nodes").get(ni) else { return };
-        if depth > 64 || m.positions.len() > 4_000_000 { return; }
+        if depth > 64 || m.positions.len() > 4_000_000 || std::mem::replace(&mut seen[ni], true) { return; }
         let w = mul(parent, node_matrix(n));
         if let Some(mesh) = n.get("mesh").and_then(|v| v.as_u64()).and_then(|i| self.list("meshes").get(i as usize)) {
             for p in mesh.get("primitives").and_then(|v| v.as_array()).map(|v| v.as_slice()).unwrap_or(&[]) {
@@ -98,6 +101,7 @@ impl Doc<'_> {
                 let base = m.positions.len() as u32;
                 m.positions.extend(pos.chunks(3).map(|c| xform(&w, [c[0] as f32, c[1] as f32, c[2] as f32])));
                 let nv = m.positions.len() as u32 - base;
+                if nv == 0 { continue; }
                 match p.get("indices").and_then(|v| v.as_u64()).and_then(|i| self.read(i as usize, 1)) {
                     Some(ix) => m.indices.extend(ix.iter().take(ix.len() / 3 * 3).map(|&i| (i as u32).min(nv.saturating_sub(1)) + base)),
                     None => m.indices.extend(base..base + nv / 3 * 3),
@@ -109,7 +113,7 @@ impl Doc<'_> {
                 }
             }
         }
-        for c in n.get("children").and_then(|v| v.as_array()).map(|v| v.as_slice()).unwrap_or(&[]) { if let Some(ci) = c.as_u64() { self.walk(ci as usize, w, depth + 1, m); } }
+        for c in n.get("children").and_then(|v| v.as_array()).map(|v| v.as_slice()).unwrap_or(&[]) { if let Some(ci) = c.as_u64() { self.walk(ci as usize, w, depth + 1, m, seen); } }
     }
 }
 
@@ -142,11 +146,12 @@ pub fn parse(path: &Path) -> Result<Mesh, String> {
     }
     let d = Doc { j: &j, bufs };
     let mut m = Mesh::default();
+    let mut seen = vec![false; d.list("nodes").len()];
     let scenes = d.list("scenes");
     let si = j.get("scene").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     match scenes.get(si) {
-        Some(sc) => for n in sc.get("nodes").and_then(|v| v.as_array()).map(|v| v.as_slice()).unwrap_or(&[]) { if let Some(i) = n.as_u64() { d.walk(i as usize, ID, 0, &mut m); } },
-        None => for i in 0..d.list("nodes").len() { d.walk(i, ID, 0, &mut m); },
+        Some(sc) => for n in sc.get("nodes").and_then(|v| v.as_array()).map(|v| v.as_slice()).unwrap_or(&[]) { if let Some(i) = n.as_u64() { d.walk(i as usize, ID, 0, &mut m, &mut seen); } },
+        None => for i in 0..d.list("nodes").len() { d.walk(i, ID, 0, &mut m, &mut seen); },
     }
     Ok(m)
 }

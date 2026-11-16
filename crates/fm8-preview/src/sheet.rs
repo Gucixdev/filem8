@@ -39,7 +39,10 @@ pub fn load(path: &Path, o: &Opts) -> Preview {
     if let Some(frames) = atlas_frames(&v) {
         let img_name = v.pointer("/meta/image").and_then(|s| s.as_str());
         let Some(img_name) = img_name else { return Preview::Info(vec![format!("Atlas with {} frames", frames.len()), "meta.image missing".into()]) };
+        // the sheet image sits next to the JSON, like glTF buffers: no absolute paths, no ".."
+        if img_name.starts_with('/') || img_name.split('/').any(|s| s == "..") { return Preview::Error("atlas: meta.image outside folder".into()) }
         let ip = path.parent().unwrap_or(Path::new(".")).join(img_name);
+        if !std::fs::metadata(&ip).map(|m| m.is_file()).unwrap_or(false) { return Preview::Error(format!("{}: not a file", ip.display())) }
         let mut d = match crate::image_load::decode(&ip, &Opts { max_dim: 100_000, ..o.clone() }) { Ok(d) => d, Err(e) => return Preview::Error(format!("{}: {e}", ip.display())) };
         let fr = &mut d.frames[0];
         for (_, [x, y, w, h]) in &frames { outline(fr, *x, *y, *w, *h, [255, 80, 80, 255]); }
@@ -64,8 +67,11 @@ fn outline(f: &mut Frame, x: i64, y: i64, w: i64, h: i64, c: [u8; 4]) {
             f.rgba[i..i + 4].copy_from_slice(&c);
         }
     };
-    for i in 0..w { put(x + i, y); put(x + i, y + h - 1); }
-    for j in 0..h { put(x, y + j); put(x + w - 1, y + j); }
+    // only the part inside the image is walked: sizes come from the file
+    let (fw, fh) = (f.w as i64, f.h as i64);
+    let (x1, y1) = (x.saturating_add(w), y.saturating_add(h));
+    for px in x.max(0)..x1.min(fw) { put(px, y); put(px, y1 - 1); }
+    for py in y.max(0)..y1.min(fh) { put(x, py); put(x1 - 1, py); }
 }
 
 /// Tiled map: draw each layer's tile ids as hash-coloured cells (first layer
@@ -73,7 +79,7 @@ fn outline(f: &mut Frame, x: i64, y: i64, w: i64, h: i64, c: [u8; 4]) {
 fn tiled(v: &Value) -> Preview {
     let (mw, mh) = (v.get("width").and_then(|x| x.as_u64()).unwrap_or(0) as u32, v.get("height").and_then(|x| x.as_u64()).unwrap_or(0) as u32);
     let (tw, th) = (v.get("tilewidth").and_then(|x| x.as_u64()).unwrap_or(0), v.get("tileheight").and_then(|x| x.as_u64()).unwrap_or(0));
-    if mw == 0 || mh == 0 || mw * mh > 4_000_000 { return Preview::Error("bad map size".into()) }
+    if mw == 0 || mh == 0 || mw as u64 * mh as u64 > 4_000_000 { return Preview::Error("bad map size".into()) }
     let cell = (800 / mw.max(mh)).clamp(2, 24);
     let (iw, ih) = (mw * cell, mh * cell);
     let mut rgba = vec![0u8; (iw * ih * 4) as usize];

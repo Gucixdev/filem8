@@ -84,6 +84,10 @@ pub fn load(path: &Path, o: &Opts) -> Preview {
     if md.is_dir() {
         return Preview::Info(dir_info(path));
     }
+    // a FIFO blocks on open and a device never ends: only regular files are read
+    if !md.is_file() {
+        return Preview::Info(vec![format!("{name} (special file)")]);
+    }
     let mut class = classify_name(&name, false);
     if class == Class::Other {
         let mut head = [0u8; 512];
