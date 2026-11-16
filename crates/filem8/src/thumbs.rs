@@ -131,6 +131,8 @@ fn generate(p: &Path, px: u32) -> Option<Thumb> {
 /// Cache hit -> Thumb; miss -> generate and store.
 fn make(p: &Path, px: u32) -> Option<Thumb> {
     if p.is_dir() { return make_dir(p); }
+    // a FIFO blocks on open and a device never ends: only regular files get a thumbnail
+    if !p.is_file() { return None; }
     let mt = mtime_s(p)?;
     let cf = thumbcache::cache_file(p, px);
     if let Ok(b) = std::fs::read(&cf) {
@@ -181,6 +183,7 @@ fn make_dir(p: &Path) -> Option<Thumb> {
 }
 
 fn make_anim(p: &Path) -> Option<Frames> {
+    if !p.is_file() { return None; }
     let name = p.file_name()?.to_string_lossy().into_owned();
     match classify_name(&name, false) {
         Class::Image => {
@@ -208,9 +211,10 @@ impl Thumbs {
             std::thread::spawn(move || loop {
                 let job = { jrx.lock().unwrap().recv() };
                 let Ok(job) = job else { return };
+                // a decoder that panics on one broken file must not take the worker (and every later thumbnail) with it
                 let r = match job {
-                    Job::Still(p, px) => { let t = make(&p, px); Done::Still(p, t) }
-                    Job::Anim(p) => { let f = make_anim(&p); Done::Anim(p, f) }
+                    Job::Still(p, px) => { let t = std::panic::catch_unwind(|| make(&p, px)).unwrap_or(None); Done::Still(p, t) }
+                    Job::Anim(p) => { let f = std::panic::catch_unwind(|| make_anim(&p)).unwrap_or(None); Done::Anim(p, f) }
                 };
                 if dtx.send(r).is_err() { return; }
             });
