@@ -113,6 +113,12 @@ pub fn copy_tree(src: &Path, dst: &Path, progress: &mut dyn FnMut(u64) -> bool, 
             copy_tree(&e.path(), &dst.join(e.file_name()), progress, done)?;
         }
         let _ = fs::set_permissions(dst, md.permissions());
+    } else if !md.is_file() {
+        // opening a FIFO for reading blocks until a writer shows up: recreate it instead; sockets and devices are not copied
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        if !md.file_type().is_fifo() { return Err(io::Error::other("special file (socket or device) cannot be copied")); }
+        let c = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(dst.as_os_str()))?;
+        if unsafe { libc::mkfifo(c.as_ptr(), (md.permissions().mode() & 0o7777) as libc::mode_t) } != 0 { return Err(io::Error::last_os_error()); }
     } else {
         let mut r = fs::File::open(src)?;
         let mut w = fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
@@ -208,13 +214,15 @@ fn restore(originals: &[PathBuf]) -> Result<(), String> {
 }
 
 /// Re-apply (used by redo). Returns the op as actually applied.
+/// Like the first run it never overwrites: a target that appeared in the meantime is an error.
 fn apply(op: &Op) -> Result<Op, String> {
+    let free = |p: &Path| if fs::symlink_metadata(p).is_ok() { Err(format!("{} exists", p.display())) } else { Ok(()) };
     match op {
-        Op::Rename { from, to } => { fs::rename(from, to).map_err(|e| err(e, from))?; Ok(op.clone()) }
-        Op::Move { pairs } => { for (a, b) in pairs { fs::rename(a, b).map_err(|e| err(e, a))?; } Ok(op.clone()) }
+        Op::Rename { from, to } => { free(to)?; fs::rename(from, to).map_err(|e| err(e, from))?; Ok(op.clone()) }
+        Op::Move { pairs } => { for (_, b) in pairs { free(b)?; } for (a, b) in pairs { fs::rename(a, b).map_err(|e| err(e, a))?; } Ok(op.clone()) }
         Op::Trash { originals } => trash(originals),
         Op::NewDir { path } => { fs::create_dir(path).map_err(|e| err(e, path))?; Ok(op.clone()) }
-        Op::NewFile { path } => { fs::File::create(path).map_err(|e| err(e, path))?; Ok(op.clone()) }
+        Op::NewFile { path } => { fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e| err(e, path))?; Ok(op.clone()) }
         Op::Copy { .. } => Err("redo of copy is not supported".into()),
     }
 }
