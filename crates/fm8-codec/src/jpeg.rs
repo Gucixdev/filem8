@@ -93,9 +93,10 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
         match m {
             0xDB => { let mut s = seg; while !s.is_empty() { let (pq, tq) = (s[0] >> 4, (s[0] & 15) as usize); if tq > 3 { return Err("jpeg: bad dqt".into()) } let n = if pq == 0 { 64 } else { 128 }; if s.len() < 1 + n { return Err("jpeg: short dqt".into()) } for i in 0..64 { qt[tq][ZZ[i]] = if pq == 0 { s[1 + i] as u16 } else { u16::from_be_bytes([s[1 + i * 2], s[2 + i * 2]]) } } s = &s[1 + n..] } }
             0xC4 => { let mut s = seg; while s.len() >= 17 { let (tc, th) = (s[0] >> 4, (s[0] & 15) as usize); let counts: [u8; 16] = s[1..17].try_into().unwrap(); let n: usize = counts.iter().map(|&c| c as usize).sum(); if th > 3 || s.len() < 17 + n { return Err("jpeg: bad dht".into()) } let t = Table::new(&counts, s[17..17 + n].to_vec()); if tc == 0 { dc[th] = t } else { ac[th] = t } s = &s[17 + n..] } }
-            0xDD => ri = u16::from_be_bytes([seg[0], seg[1]]) as usize,
+            0xDD if seg.len() >= 2 => ri = u16::from_be_bytes([seg[0], seg[1]]) as usize,
             0xEE if seg.starts_with(b"Adobe") && seg.len() >= 12 => adobe = Some(seg[11]),
             0xC0 | 0xC1 => {
+                if seg.len() < 6 { return Err("jpeg: short frame".into()) }
                 if seg[0] != 8 { return Err("jpeg: only 8-bit".into()) }
                 h = u16::from_be_bytes([seg[1], seg[2]]) as usize; w = u16::from_be_bytes([seg[3], seg[4]]) as usize;
                 let n = seg[5] as usize;
@@ -107,7 +108,8 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
             0xC3 | 0xC5..=0xC7 | 0xC9..=0xCF => return Err("jpeg: unsupported coding".into()),
             0xDA => {
                 if comps.is_empty() { return Err("jpeg: scan before frame".into()) }
-                let ns = seg[0] as usize;
+                let ns = *seg.first().ok_or("jpeg: short scan")? as usize;
+                if seg.len() < 1 + ns * 2 { return Err("jpeg: short scan".into()) }
                 if ns != comps.len() { return Err("jpeg: non-interleaved scans unsupported".into()) }
                 for i in 0..ns { let cid = seg[1 + i * 2]; let t = seg[2 + i * 2]; let c = comps.iter_mut().find(|c| c.id == cid).ok_or("jpeg: bad scan comp")?; c.td = (t >> 4) as usize & 3; c.ta = (t & 15) as usize & 3; }
                 p += len;
@@ -134,9 +136,10 @@ fn scan(b: &[u8], p: usize, w: usize, h: usize, mut comps: Vec<Comp>, qt: &[[u16
         for c in comps.iter_mut() { for by in 0..c.v { for bx in 0..c.h {
             blk.fill(0);
             let t = br.huff(&dc[c.td])? as u32;
+            if t > 16 { return Err("jpeg: bad dc size".into()) }
             let diff = if t == 0 { 0 } else { extend(br.bits(t)?, t) };
-            c.pred += diff;
-            blk[0] = c.pred * qt[c.tq][0] as i32;
+            c.pred = c.pred.wrapping_add(diff);
+            blk[0] = c.pred.wrapping_mul(qt[c.tq][0] as i32);
             let mut k = 1;
             while k < 64 {
                 let rs = br.huff(&ac[c.ta])?;

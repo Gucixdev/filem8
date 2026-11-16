@@ -8,7 +8,8 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
     let (cm_first, cm_len, cm_bits) = (u16::from_le_bytes([b[3], b[4]]) as usize, u16::from_le_bytes([b[5], b[6]]) as usize, b[7] as usize);
     let (w, h) = (u16::from_le_bytes([b[12], b[13]]) as usize, u16::from_le_bytes([b[14], b[15]]) as usize);
     let (bpp, desc) = (b[16] as usize, b[17]);
-    if w == 0 || h == 0 { return Err("tga: bad size".into()) }
+    // an RLE packet gives at most 128 pixels for 2 bytes: a header that claims more than the file can hold is truncated
+    if w == 0 || h == 0 || w * h > 1 << 28 || w * h > b.len().saturating_mul(128) { return Err("tga: bad size".into()) }
     let rle = ty >= 8;
     let kind = ty & 7;
     if !matches!(kind, 1..=3) || !matches!(bpp, 8 | 15 | 16 | 24 | 32) { return Err("tga: unsupported".into()) }
@@ -23,6 +24,7 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
     };
     let mut pal = vec![];
     if cmtype == 1 {
+        if !matches!(cm_bits, 8 | 15 | 16 | 24 | 32) { return Err("tga: unsupported palette".into()) }
         let eb = cm_bits.div_ceil(8);
         let raw = b.get(p..p + cm_len * eb).ok_or("tga: short palette")?;
         for i in 0..cm_len { pal.push(conv(&raw[i * eb..], cm_bits)) }

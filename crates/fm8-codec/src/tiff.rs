@@ -17,7 +17,7 @@ impl R<'_> {
     }
 }
 
-fn tiff_lzw(d: &[u8]) -> Vec<u8> {
+fn tiff_lzw(d: &[u8], limit: usize) -> Vec<u8> {
     // MSB-first, early change
     let mut table: Vec<Vec<u8>> = vec![];
     let reset = |t: &mut Vec<Vec<u8>>| { t.clear(); for i in 0..256 { t.push(vec![i as u8]) } t.push(vec![]); t.push(vec![]) };
@@ -33,6 +33,7 @@ fn tiff_lzw(d: &[u8]) -> Vec<u8> {
             if code == 257 { return out }
             let entry = if code < table.len() { table[code].clone() } else if let Some(p) = &prev { let mut e = p.clone(); e.push(p[0]); e } else { return out };
             out.extend_from_slice(&entry);
+            if out.len() >= limit { return out }
             if let Some(p) = prev.take() { let mut e = p; e.push(entry[0]); if table.len() < 4096 { table.push(e) } }
             prev = Some(entry);
             size = match table.len() + 1 { n if n >= 2048 => 12, n if n >= 1024 => 11, n if n >= 512 => 10, _ => 9 };
@@ -61,7 +62,7 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
     let (w, h) = (one(256, 0) as usize, one(257, 0) as usize);
     if w == 0 || h == 0 || w * h > 1 << 28 { return Err("tiff: bad size".into()) }
     let bits = get(258).unwrap_or(vec![1]);
-    let bps = bits[0] as usize;
+    let bps = *bits.first().ok_or("tiff: no bit depth")? as usize;
     let comp = one(259, 1);
     let photo = one(262, 1);
     let spp = one(277, 1) as usize;
@@ -71,14 +72,17 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
     if planar != 1 || !matches!(bps, 1 | 8 | 16) || get(322).is_some() { return Err("tiff: unsupported layout (planar/tiled/bit depth)".into()) }
     let offs = get(273).ok_or("tiff: no strips")?;
     let cnts = get(279).unwrap_or_default();
+    if spp == 0 || spp > 8 { return Err("tiff: unsupported samples per pixel".into()) }
     let rowbytes = (w * spp * bps).div_ceil(8);
+    // no codec here expands more than about 1:1400 (LZW): a header that claims more than the file can hold is truncated
+    if rowbytes * h > b.len().saturating_mul(2048) { return Err("tiff: truncated".into()) }
     let mut raw = Vec::with_capacity(rowbytes * h);
     for (i, &o) in offs.iter().enumerate() {
         let o = o as usize;
         let c = cnts.get(i).map(|&c| c as usize).unwrap_or(b.len().saturating_sub(o));
         let s = b.get(o..(o + c).min(b.len())).ok_or("tiff: bad strip")?;
         let rows = rps.min(h - (i * rps).min(h));
-        let mut d = match comp { 1 => s.to_vec(), 5 => tiff_lzw(s), 8 | 32946 => inflate::zlib(s, rowbytes * rows + 1024)?, 32773 => packbits(s), _ => return Err(format!("tiff: compression {comp} unsupported")) };
+        let mut d = match comp { 1 => s.to_vec(), 5 => tiff_lzw(s, rowbytes * rows), 8 | 32946 => inflate::zlib(s, rowbytes * rows + 1024)?, 32773 => packbits(s), _ => return Err(format!("tiff: compression {comp} unsupported")) };
         d.resize(rowbytes * rows, 0);
         if pred == 2 && bps == 8 { for y in 0..rows { for x in spp..rowbytes { d[y * rowbytes + x] = d[y * rowbytes + x].wrapping_add(d[y * rowbytes + x - spp]) } } }
         raw.extend_from_slice(&d);

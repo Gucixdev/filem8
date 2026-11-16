@@ -9,7 +9,7 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
     let t: Vec<&str> = res.split_whitespace().collect();
     if t.len() != 4 || t[0].len() != 2 || t[2].len() != 2 { return Err("hdr: bad resolution".into()) }
     let (h, w): (usize, usize) = (t[1].parse().map_err(|_| "hdr: h")?, t[3].parse().map_err(|_| "hdr: w")?);
-    if t[0] != "-Y" && t[0] != "+Y" || w == 0 || h == 0 || w * h > 1 << 28 { return Err("hdr: unsupported orientation/size".into()) }
+    if t[0] != "-Y" && t[0] != "+Y" || w == 0 || h == 0 || w.checked_mul(h).is_none_or(|n| n > 1 << 28) { return Err("hdr: unsupported orientation/size".into()) }
     let flip_y = t[0] == "+Y";
     let flip_x = t[2] == "-X";
     let mut img = Image::new(w as u32, h as u32);

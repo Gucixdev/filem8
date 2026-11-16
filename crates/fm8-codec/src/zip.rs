@@ -22,10 +22,10 @@ pub fn list(b: &[u8], cap: usize) -> Result<(Vec<Entry>, bool), String> {
     let eocd = (lo..b.len().saturating_sub(21)).rev().find(|&i| &b[i..i + 4] == b"PK\x05\x06").ok_or("zip: no end-of-central-directory")?;
     let (mut n, mut cd) = (u16le(b, eocd + 10).ok_or("zip: short")? as u64, u32le(b, eocd + 16).ok_or("zip: short")? as u64);
     if (n == 0xFFFF || cd == 0xFFFF_FFFF) && eocd >= 20 && &b[eocd - 20..eocd - 16] == b"PK\x06\x07" {
-        let z64 = u64le(b, eocd - 12).ok_or("zip64")? as usize;
+        let z64 = usize::try_from(u64le(b, eocd - 12).ok_or("zip64")?).ok().filter(|&p| p < b.len()).ok_or("zip64")?;
         if b.get(z64..z64 + 4) == Some(b"PK\x06\x06") { n = u64le(b, z64 + 32).ok_or("zip64")?; cd = u64le(b, z64 + 48).ok_or("zip64")?; }
     }
-    let mut p = cd as usize;
+    let mut p = usize::try_from(cd).ok().filter(|&p| p < b.len()).ok_or("zip: bad central directory")?;
     let mut v = vec![];
     for i in 0..n {
         if i as usize >= cap { return Ok((v, true)) }
@@ -59,6 +59,7 @@ pub fn list(b: &[u8], cap: usize) -> Result<(Vec<Entry>, bool), String> {
 /// Extract one member (stored or deflate), checked against its CRC-32.
 pub fn read(b: &[u8], e: &Entry, limit: usize) -> Result<Vec<u8>, String> {
     let l = e.local;
+    if l >= b.len() || e.csize > b.len() as u64 { return Err("zip: truncated member".into()) }
     if b.get(l..l + 4) != Some(b"PK\x03\x04") { return Err("zip: bad local header".into()) }
     let start = l + 30 + u16le(b, l + 26).ok_or("zip: short")? as usize + u16le(b, l + 28).ok_or("zip: short")? as usize;
     let raw = b.get(start..start + e.csize as usize).ok_or("zip: truncated member")?;

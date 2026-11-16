@@ -7,7 +7,7 @@ fn lzw(data: &[u8], min: u8, n: usize) -> Vec<u8> {
     let mut table: Vec<(u16, u8)> = Vec::with_capacity(4096);
     let reset = |t: &mut Vec<(u16, u8)>| { t.clear(); for i in 0..clear + 2 { t.push((u16::MAX, i as u8)) } };
     reset(&mut table);
-    let mut out = Vec::with_capacity(n);
+    let mut out = Vec::with_capacity(n.min(1 << 24));
     let (mut size, mut acc, mut nb, mut prev) = (min as usize + 1, 0u32, 0usize, None::<usize>);
     let mut buf = vec![];
     for &byte in data {
@@ -48,7 +48,7 @@ fn lzw(data: &[u8], min: u8, n: usize) -> Vec<u8> {
 pub fn decode(b: &[u8], max_frames: usize) -> Result<Vec<Frame>, String> {
     if b.len() < 13 || !b.starts_with(b"GIF8") { return Err("not gif".into()) }
     let (w, h) = (u16::from_le_bytes([b[6], b[7]]) as usize, u16::from_le_bytes([b[8], b[9]]) as usize);
-    if w == 0 || h == 0 { return Err("gif: bad size".into()) }
+    if w == 0 || h == 0 || w * h > 1 << 28 { return Err("gif: bad size".into()) }
     let flags = b[10];
     let bg_index = b[11] as usize;
     let mut p = 13;
@@ -58,7 +58,8 @@ pub fn decode(b: &[u8], max_frames: usize) -> Result<Vec<Frame>, String> {
     let _ = bg_index;
     let mut frames = vec![];
     let (mut delay, mut transp, mut disposal) = (10u32, None::<u8>, 0u8);
-    while p < b.len() && frames.len() < max_frames {
+    // every frame is a full canvas: stop before the copies pass 1 GiB (the first frame always fits the size cap)
+    while p < b.len() && frames.len() < max_frames && frames.len() * w * h * 4 < 1 << 30 {
         match b[p] {
             0x21 => {
                 let label = *b.get(p + 1).ok_or("gif: short")?;
@@ -87,6 +88,7 @@ pub fn decode(b: &[u8], max_frames: usize) -> Result<Vec<Frame>, String> {
                 let saved = if disposal == 3 { Some(canvas.clone()) } else { None };
                 let rows: Vec<usize> = if lf & 0x40 != 0 { [(0, 8), (4, 8), (2, 4), (1, 2)].iter().flat_map(|&(s, st)| (s..fh).step_by(st)).collect() } else { (0..fh).collect() };
                 for (k, &ry) in rows.iter().enumerate() {
+                    if k * fw >= idx.len() { break }
                     for x in 0..fw {
                         let Some(&ci) = idx.get(k * fw + x) else { continue };
                         if Some(ci) == transp { continue }

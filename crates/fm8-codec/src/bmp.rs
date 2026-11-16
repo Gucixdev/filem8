@@ -60,7 +60,7 @@ pub fn decode_dib(dib: &[u8], data_off: usize, ico: bool) -> Result<Image, Strin
     let rb = (w * bpp).div_ceil(32) * 4;
     if data.len() < rb * h { return Err("bmp: short pixel data".into()) }
     let shift = |m: u32| -> (u32, u32) { if m == 0 { (0, 0) } else { let s = m.trailing_zeros(); (s, (m >> s).count_ones()) } };
-    let ch = |v: u32, m: u32| -> u8 { let (s, n) = shift(m); if n == 0 { 255 } else { let x = (v & m) >> s; (x * 255 / ((1 << n) - 1)) as u8 } };
+    let ch = |v: u32, m: u32| -> u8 { let (s, n) = shift(m); if n == 0 { 255 } else { let (x, max) = (((v & m) >> s) as u64, (1u64 << n) - 1); (x.min(max) * 255 / max) as u8 } };
     let mut any_alpha = false;
     for y in 0..h {
         let row = &data[y * rb..(y + 1) * rb];

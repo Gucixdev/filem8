@@ -29,7 +29,9 @@ pub fn list(buf: &[u8], cap: usize) -> (Vec<Entry>, bool) {
         let mut size = oct(&h[124..136]);
         let ty = h[156];
         let data = p + 512;
-        let blocks = (size as usize).div_ceil(512) * 512;
+        // a member cannot be longer than what is left of the buffer's address range: a size that overflows ends the listing
+        let end_of = |size: u64| usize::try_from(size).ok().and_then(|s| s.checked_next_multiple_of(512)).and_then(|b| data.checked_add(b));
+        let Some(mut next) = end_of(size) else { break };
         match ty {
             b'L' => { long = Some(cstr(buf.get(data..data + size as usize).unwrap_or(&[]))) }
             b'x' => {
@@ -47,15 +49,15 @@ pub fn list(buf: &[u8], cap: usize) -> (Vec<Entry>, bool) {
                 if &h[257..262] == b"ustar" { let pre = cstr(&h[345..500]); if !pre.is_empty() { name = format!("{pre}/{name}") } }
                 if let Some(l) = long.take() { name = l }
                 if let Some(x) = pax_path.take() { name = x }
-                if let Some(x) = pax_size.take() { size = x }
+                // pax size= replaces the header field (members over 8 GiB), also for finding the next header
+                if let Some(x) = pax_size.take() { size = x; let Some(n) = end_of(size) else { break }; next = n }
                 let is_dir = ty == b'5' || name.ends_with('/');
                 v.push(Entry { name, size, is_dir, mtime: oct(&h[136..148]), mode: oct(&h[100..108]) as u32, data });
             }
         }
-        let skip = blocks;
-        p = data + skip;
+        p = next;
     }
     (v, false)
 }
 
-pub fn read<'a>(buf: &'a [u8], e: &Entry) -> Option<&'a [u8]> { buf.get(e.data..e.data + e.size as usize) }
+pub fn read<'a>(buf: &'a [u8], e: &Entry) -> Option<&'a [u8]> { buf.get(e.data..e.data.checked_add(usize::try_from(e.size).ok()?)?) }
