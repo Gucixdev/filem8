@@ -88,6 +88,15 @@ impl Xform {
         self.clamp_pan(view, img);
     }
 
+    /// Where the already-oriented picture lands in the window: (x, y, w, h). For callers that rotate and flip the pixels
+    /// themselves (see `render::orient`) and only need an axis-aligned rectangle to draw.
+    pub fn dest(&self, view: (f32, f32), img: (f32, f32)) -> (f32, f32, f32, f32) {
+        let s = self.scale(view, img);
+        let (ow, oh) = self.oriented(img);
+        let (w, h) = (ow * s, oh * s);
+        (view.0 / 2.0 + self.pan.0 - w / 2.0, view.1 / 2.0 + self.pan.1 - h / 2.0, w, h)
+    }
+
     /// Linear part of "window pixel -> picture pixel": (m00, m01, m10, m11), already divided by the scale.
     fn linear(&self, view: (f32, f32), img: (f32, f32)) -> [f32; 4] {
         let k = 1.0 / self.scale(view, img);
@@ -201,6 +210,17 @@ mod tests {
         x.top_left(V, img);
         assert_eq!(x.zoom, 1.0);
         assert!(x.to_source(V, img, (200.0, 0.0)).1.abs() < 0.01);
+    }
+
+    #[test]
+    fn dest_is_centred_and_scaled_by_the_oriented_size() {
+        let mut x = Xform::default();
+        x.zoom = 2.0;
+        assert_eq!(x.dest(V, I), (0.0, 50.0, 400.0, 200.0));
+        x.rotate(true);
+        assert_eq!(x.dest(V, I), (100.0, -50.0, 200.0, 400.0));
+        x.pan = (10.0, 20.0);
+        assert_eq!(x.dest(V, I).0, 110.0);
     }
 
     #[test]

@@ -26,6 +26,16 @@ pub fn siblings(path: &Path) -> Nav {
     Nav { files, idx }
 }
 
+/// Walk exactly these files (e.g. the file manager's own listing, in its own sort order), starting at `current`.
+pub fn from_files(files: Vec<PathBuf>, current: &Path) -> Nav {
+    let mut files = files;
+    let idx = files.iter().position(|f| f == current).unwrap_or_else(|| {
+        files.insert(0, current.to_path_buf());
+        0
+    });
+    Nav { files, idx }
+}
+
 fn natural(s: &str) -> Vec<(u8, u64, String)> {
     let mut out = Vec::new();
     let mut it = s.chars().peekable();

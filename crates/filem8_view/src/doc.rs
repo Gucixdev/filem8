@@ -24,6 +24,13 @@ pub struct Doc {
     pub text: bool,
 }
 
+impl Page {
+    /// Any pixel not fully opaque (then the viewer shows a checkerboard behind it).
+    pub fn has_alpha(&self) -> bool {
+        self.rgba.chunks_exact(4).any(|p| p[3] != 255)
+    }
+}
+
 pub fn opts() -> Opts {
     Opts { max_dim: 2048, max_text_bytes: 1 << 20, max_frames: 500 }
 }

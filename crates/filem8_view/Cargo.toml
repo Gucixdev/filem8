@@ -14,7 +14,8 @@ path = "src/main.rs"
 
 [features]
 # Same loaders as filem8: light = images, text/code, OBJ/STL; `full` adds SVG, audio waveform, glTF, archives, WebP/AVIF.
-default = ["fm8-preview/svg"]
+default = ["svg"]
+svg = ["fm8-preview/svg"]
 full = ["fm8-preview/full"]
 
 [dependencies]

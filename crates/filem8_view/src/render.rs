@@ -77,6 +77,31 @@ pub fn draw_page(fb: &mut Framebuffer, vp: Viewport, page: &Page, xf: &Xform, bg
     }
 }
 
+/// The picture with rotation and flips baked into its pixels: `quarter` clockwise turns, then mirrors in screen space
+/// (same meaning as `Xform`). For toolkits that can only draw axis-aligned images. Returns (w, h, rgba).
+pub fn orient(w: u32, h: u32, rgba: &[u8], quarter: u8, flip_x: bool, flip_y: bool) -> (u32, u32, Vec<u8>) {
+    let q = quarter % 4;
+    let (ow, oh) = if q % 2 == 1 { (h, w) } else { (w, h) };
+    if q == 0 && !flip_x && !flip_y {
+        return (w, h, rgba.to_vec());
+    }
+    let mut out = vec![0u8; (ow * oh * 4) as usize];
+    for y in 0..oh {
+        for x in 0..ow {
+            let (fx, fy) = (if flip_x { ow - 1 - x } else { x }, if flip_y { oh - 1 - y } else { y });
+            let (sx, sy) = match q {
+                0 => (fx, fy),
+                1 => (fy, h - 1 - fx),
+                2 => (w - 1 - fx, h - 1 - fy),
+                _ => (w - 1 - fy, fx),
+            };
+            let (i, o) = (((sy * w + sx) * 4) as usize, ((y * ow + x) * 4) as usize);
+            out[o..o + 4].copy_from_slice(&rgba[i..i + 4]);
+        }
+    }
+    (ow, oh, out)
+}
+
 /// A one-line bar along the bottom with `left` and `right` text.
 pub fn status_bar(fb: &mut Framebuffer, t: &Theme, scale: f32, left: &str, right: &str) -> u32 {
     let bar_h = (22.0 * scale).ceil() as u32;
@@ -126,6 +151,32 @@ mod tests {
         draw_page(&mut fb, vp, &page(), &xf, bg);
         assert_eq!(px(&fb, 20, 12), [255, 0, 0]);
         assert_eq!(px(&fb, 20, 28), [0, 0, 255]);
+    }
+
+    #[test]
+    fn orient_agrees_with_the_inverse_map_for_every_orientation() {
+        // 3x2 picture with a distinct colour per pixel
+        let rgba: Vec<u8> = (0..6u8).flat_map(|i| [i * 40, 255 - i * 40, i, 255]).collect();
+        let page = Page { w: 3, h: 2, rgba: rgba.clone(), delay_ms: 100 };
+        for q in 0..4u8 {
+            for (fx, fy) in [(false, false), (true, false), (false, true), (true, true)] {
+                let (ow, oh, out) = orient(3, 2, &rgba, q, fx, fy);
+                let mut xf = Xform::default();
+                xf.zoom = 1.0;
+                xf.quarter = q;
+                xf.flip_x = fx;
+                xf.flip_y = fy;
+                let view = (ow as f32, oh as f32);
+                for y in 0..oh {
+                    for x in 0..ow {
+                        let (sx, sy) = xf.to_source(view, (3.0, 2.0), (x as f32 + 0.5, y as f32 + 0.5));
+                        let i = ((sy.floor() as u32 * page.w + sx.floor() as u32) * 4) as usize;
+                        let o = ((y * ow + x) * 4) as usize;
+                        assert_eq!(out[o..o + 4], page.rgba[i..i + 4], "q={q} fx={fx} fy={fy} at {x},{y}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

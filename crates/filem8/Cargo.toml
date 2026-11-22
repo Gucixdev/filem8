@@ -16,13 +16,14 @@ path = "src/main.rs"
 default = ["svg-icons"]
 # SVG icon/thumbnail rasteriser (resvg): the one heavy dependency kept in the light build, for breeze/Papirus themes.
 svg-icons = ["fm8-preview/svg"]
-full = ["svg-icons", "fm8-preview/full"]
+full = ["svg-icons", "fm8-preview/full", "filem8_view/full"]
 
 [dependencies]
 fm8-ui = { path = "../fm8-ui" }
 fm8-core = { path = "../fm8-core" }
 fm8-codec = { path = "../fm8-codec" }
 fm8-preview = { path = "../fm8-preview", default-features = false }
+filem8_view = { path = "../filem8_view", default-features = false }
 winit = "0.30"
 wgpu = "27"
 pollster = "0.4"

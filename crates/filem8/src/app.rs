@@ -5,6 +5,7 @@
 //! second pane (dual layout) is parked in `other` and swapped in while it is
 //! drawn, so all navigation code only ever deals with "the current pane".
 
+mod viewer;
 use crate::preview_pane::PreviewPane;
 use crate::settings_ui::{bind_matches, SettingsState};
 use crate::thumbs::Thumbs;
@@ -54,7 +55,7 @@ pub(crate) enum Ctx {
 }
 
 #[derive(Clone, Copy)]
-enum Act { Open, NewTab, AddBookmark, Rename, Copy, Cut, Paste, PasteInto, Trash, CopyOther, MoveOther, NewFolder, Reload, SelectAll, Col(usize), BmRename, BmUp, BmDown, BmRemove, TrRestore, TrDelete, TrEmpty, Nop }
+enum Act { Open, View, NewTab, AddBookmark, Rename, Copy, Cut, Paste, PasteInto, Trash, CopyOther, MoveOther, NewFolder, Reload, SelectAll, Col(usize), BmRename, BmUp, BmDown, BmRemove, TrRestore, TrDelete, TrEmpty, Nop }
 
 pub(crate) struct Drag { pub paths: Vec<PathBuf> }
 
@@ -101,6 +102,7 @@ pub struct App {
     /// Filter bar above the list (Ctrl+F / magnifier): fuzzy name filter.
     pub search_open: bool,
     /// Trash view (a virtual place) while open in the focused pane.
+    pub(crate) viewer: Option<viewer::Viewer>,
     pub(crate) trash: Option<crate::trash_ui::TrashView>,
     pub(crate) trash_dlg: Option<crate::trash_ui::TrashDlg>,
     pub(crate) trash_roots: Vec<(PathBuf, Option<PathBuf>)>,
@@ -158,7 +160,7 @@ impl App {
         let mut a = App {
             tabs: vec![], active: 0, other: None, side: 0, layout: Layout::Single, next_uid: 1, places: vec![], bookmarks, path_edit: None, ctx: None,
             status: String::new(), history: History::default(), memory, prefs, cfg_dir, bm_file, real, quit: false, open_external: vec![], find: String::new(), find_at: 0.0,
-            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], search_open: false, trash: None, trash_dlg: None, trash_roots: vec![(fm8_core::trashbin::home_trash(), None)], trash_place: false, icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
+            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], search_open: false, viewer: None, trash: None, trash_dlg: None, trash_roots: vec![(fm8_core::trashbin::home_trash(), None)], trash_place: false, icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
             rename: None, pending_open: false, settings: None, confirm: None, theme_request: None, bm_rename: None, bm_press: None, bm_drag: None,
         };
         if real { a.trash_roots = fm8_core::trashbin::roots(); a.trash_place = true; }
@@ -569,6 +571,7 @@ impl App {
             if let Some(d) = self.other_dir() { let s = self.tabs[self.active].model.selection(); self.transfer(&s, &d, true); } else { self.tabs[self.active].model.reload(); }
         }
         if ui.key_pressed(Key::F(6)) { if let Some(d) = self.other_dir() { let s = self.tabs[self.active].model.selection(); self.transfer(&s, &d, false); } }
+        if ui.key_pressed(Key::Space) || ui.key_pressed(Key::F(3)) { self.open_viewer(); }
         if ui.key_pressed(Key::Delete) { self.trash_selection(); }
         if ui.key_pressed(Key::Escape) { if self.search_open { self.close_search(); ui.focus = Some(self.list_id()); } else if self.ctx.is_some() { self.ctx = None } else { self.tabs[self.active].model.clear_selection(); } }
     }
@@ -578,6 +581,10 @@ impl App {
         self.drops.clear();
         let full = rect(0.0, 0.0, ui.size.x, ui.size.y);
         ui.draw().rect(full, t.bg);
+        if let Some(mut v) = self.viewer.take() {
+            if v.frame(ui) { self.viewer = Some(v); }
+            return;
+        }
         let modal = self.settings.is_some() || self.confirm.is_some() || self.trash_dlg.is_some();
         if self.settings.is_some() { self.settings_panel(ui); }
         if self.confirm.is_some() { self.confirm_dialog(ui); }
@@ -910,6 +917,7 @@ impl App {
         match &c {
             Ctx::Entry(_, is_dir) => {
                 items.push((MenuItem::new("Open", "Enter"), Act::Open));
+                items.push((if *is_dir { MenuItem::new("View", "Space").disabled() } else { MenuItem::new("View", "Space") }, Act::View));
                 items.push((if *is_dir { MenuItem::new("Open in new tab", "Middle click") } else { MenuItem::new("Open in new tab", "").disabled() }, Act::NewTab));
                 items.push((if *is_dir { MenuItem::new("Add to bookmarks", "") } else { MenuItem::new("Add to bookmarks", "").disabled() }, Act::AddBookmark));
                 items.push((MenuItem::sep(), Act::Nop));
@@ -958,6 +966,7 @@ impl App {
                 let path = match &c { Ctx::Entry(p, _) => Some(p.clone()), Ctx::Bookmark(b) => self.bookmarks.get(*b).map(|b| b.path.clone()), _ => None };
                 match items[i].1 {
                     Act::Open => if let Some(p) = path { let d = p.is_dir(); self.open_path(p, d, false); },
+                    Act::View => if let Some(p) = path { self.open_viewer_at(p); },
                     Act::NewTab => if let Some(p) = path { self.new_tab(p); },
                     Act::AddBookmark => if let Some(p) = path { if places::add_bookmark(&mut self.bookmarks, &p) { self.save_bookmarks(); self.status = "Bookmark added".into(); } },
                     Act::Rename => { self.start_rename(); if self.rename.is_some() { ui.focus = Some(Id::new("rename")); } }
