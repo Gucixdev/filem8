@@ -2,7 +2,6 @@
 //! copy/paste, drag and drop, bookmarks, settings. Everything runs in temp
 //! dirs with temp config dirs; the user's real files and settings are never read.
 use filem8::app::{App, Layout};
-use filem8::preview_pane::Content;
 use fm8_core::settings::ViewMode;
 use fm8_ui::*;
 use std::path::{Path, PathBuf};
@@ -186,13 +185,13 @@ fn preview_layout_shows_text_and_image() {
     // entries: sub, notes.txt, pic.png
     e.keys(&mut app, Key::Down, none());
     e.keys(&mut app, Key::Down, none());
-    for _ in 0..100 { app.tick(); std::thread::sleep(std::time::Duration::from_millis(10)); if matches!(app.preview.content, Content::Text { .. }) { break; } }
-    assert!(matches!(app.preview.content, Content::Text { .. }), "text preview expected");
+    for _ in 0..200 { e.frame(&mut app, &[]); std::thread::sleep(std::time::Duration::from_millis(10)); if app.split_kind() == "text" { break; } }
+    assert_eq!(app.split_kind(), "text", "text view expected in the split");
     let fb = e.frame(&mut app, &[]);
     golden("preview_text", &crop(&fb, 640, 46, 360, 200));
     e.keys(&mut app, Key::Down, none());
-    for _ in 0..100 { app.tick(); std::thread::sleep(std::time::Duration::from_millis(10)); if matches!(app.preview.content, Content::Anim { .. }) { break; } }
-    assert!(matches!(app.preview.content, Content::Anim { .. }), "image preview expected");
+    for _ in 0..200 { e.frame(&mut app, &[]); std::thread::sleep(std::time::Duration::from_millis(10)); if app.split_kind() == "image" { break; } }
+    assert_eq!(app.split_kind(), "image", "image view expected in the split");
     let fb = e.frame(&mut app, &[]);
     golden("preview_image", &crop(&fb, 640, 46, 360, 300));
 }

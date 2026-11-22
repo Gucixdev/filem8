@@ -103,6 +103,7 @@ pub struct App {
     pub search_open: bool,
     /// Trash view (a virtual place) while open in the focused pane.
     pub(crate) viewer: Option<viewer::Viewer>,
+    pub(crate) split_viewer: Option<viewer::Viewer>,
     pub(crate) trash: Option<crate::trash_ui::TrashView>,
     pub(crate) trash_dlg: Option<crate::trash_ui::TrashDlg>,
     pub(crate) trash_roots: Vec<(PathBuf, Option<PathBuf>)>,
@@ -160,7 +161,7 @@ impl App {
         let mut a = App {
             tabs: vec![], active: 0, other: None, side: 0, layout: Layout::Single, next_uid: 1, places: vec![], bookmarks, path_edit: None, ctx: None,
             status: String::new(), history: History::default(), memory, prefs, cfg_dir, bm_file, real, quit: false, open_external: vec![], find: String::new(), find_at: 0.0,
-            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], search_open: false, viewer: None, trash: None, trash_dlg: None, trash_roots: vec![(fm8_core::trashbin::home_trash(), None)], trash_place: false, icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
+            cols, cols_dirty: false, owners: RefCell::new(HashMap::new()), thumbs: Thumbs::new(), xfers: vec![], search_open: false, viewer: None, split_viewer: None, trash: None, trash_dlg: None, trash_roots: vec![(fm8_core::trashbin::home_trash(), None)], trash_place: false, icons: crate::iconset::IconSet::off(), preview: PreviewPane::new(), clip: None, drag: None, drops: vec![],
             rename: None, pending_open: false, settings: None, confirm: None, theme_request: None, bm_rename: None, bm_press: None, bm_drag: None,
         };
         if real { a.trash_roots = fm8_core::trashbin::roots(); a.trash_place = true; }
@@ -571,7 +572,7 @@ impl App {
             if let Some(d) = self.other_dir() { let s = self.tabs[self.active].model.selection(); self.transfer(&s, &d, true); } else { self.tabs[self.active].model.reload(); }
         }
         if ui.key_pressed(Key::F(6)) { if let Some(d) = self.other_dir() { let s = self.tabs[self.active].model.selection(); self.transfer(&s, &d, false); } }
-        if ui.key_pressed(Key::Space) || ui.key_pressed(Key::F(3)) { self.open_viewer(); }
+        if ui.key_pressed(Key::Space) { self.open_viewer(); }
         if ui.key_pressed(Key::Delete) { self.trash_selection(); }
         if ui.key_pressed(Key::Escape) { if self.search_open { self.close_search(); ui.focus = Some(self.list_id()); } else if self.ctx.is_some() { self.ctx = None } else { self.tabs[self.active].model.clear_selection(); } }
     }
@@ -616,10 +617,10 @@ impl App {
             }
             Layout::Preview => {
                 let (a, b) = ui.split(Id::new("pvsplit"), main, Axis::Horizontal, 0.58, 280.0);
+                // mouse over the viewer half: plain keys are the viewer's, the list must not type-search with them
+                if self.split_hovered(ui, b) { ui.frame.text.clear(); }
                 self.pane_at(ui, a, 0, 1);
-                let target = if let Some(v) = &self.trash { v.rows.get(v.cursor).map(|r| r.it.trashed.clone()) } else { let tb = &self.tabs[self.active]; tb.model.cursor.and_then(|c| tb.model.entry(c)).map(|e| e.path.clone()) };
-                self.preview.set(target);
-                self.preview.draw(ui, b);
+                self.split_view(ui, b);
             }
         }
         self.status_bar(ui, status);
