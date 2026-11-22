@@ -1,0 +1,36 @@
+# filem8 (GUI file manager) in the built-in compositor: views, tabs, dual pane
+Window gui
+Size 960x600
+Title "filem8"
+Env FM8_BACKEND=soft
+Setup mkdir -p $HOME/Projects/frost/src $HOME/Pictures $HOME/Music $HOME/Documents && printf 'fn main() {}\n' > $HOME/Projects/frost/src/main.rs && printf '# notes\n' > $HOME/Documents/notes.md && printf 'hello\n' > $HOME/Documents/todo.txt && for c in red green blue orange purple teal; do magick -size 320x200 gradient:$c-black $HOME/Pictures/$c.png; done && magick -size 640x400 plasma:fractal $HOME/Pictures/plasma.jpg
+Run ${FILEM8:-filem8} $HOME
+WaitFor settle 600ms 20s
+Caption "filem8 - a file manager with its own widget toolkit" top
+Sleep 1500ms
+MouseMove 300 170 600ms
+MouseClick
+Sleep 700ms
+SendKey Down*2
+Sleep 700ms
+SendKey Enter
+WaitFor settle 600ms 10s
+Sleep 800ms
+Caption "Ctrl+1/2/3: list, tiles, compact" top
+SendKey C-2
+WaitFor settle 400ms 10s
+Sleep 1200ms
+SendKey C-3
+WaitFor settle 400ms 10s
+Sleep 1000ms
+SendKey C-1
+Sleep 800ms
+Caption "F3: dual pane, F5 copies to the other one" top
+SendKey F3
+WaitFor settle 500ms 10s
+Sleep 1500ms
+Caption "Ctrl+T: tabs" top
+SendKey C-t
+WaitFor settle 500ms 10s
+Sleep 1500ms
+Loop

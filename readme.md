@@ -54,6 +54,10 @@ Ctrl+1/2/3 list/tiles/compact; F2 rename; F3 layout (single/dual/preview); F5/F6
 
 ![filem8 tiles](docs/screenshot.png)
 
+![filem8: views, dual pane, tabs](docs/demo.webp)
+
+The clip is recorded from outside by autodemo driving the real window (`docs/demo.demo`).
+
 ## Design notes
 
 * Immediate mode: the UI is a pure function of state; persistent bits (scroll, split ratio, caret, focus) live in `Ui` keyed by hashed ids.
