@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# filem8_view: build (release, low priority) and look at a file. Arguments go to filem8_view (e.g. `view photo.png`).
+# FM8_FULL=1 adds audio waveforms, AVIF/WebP, glTF, archives. Headless: `view --shot out.png FILE`.
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+if [ "${FM8_FULL:-0}" = 1 ]; then
+  nice -n 19 cargo build --release -p filem8_view --features full
+else
+  nice -n 19 cargo build --release -p filem8_view
+fi
+cd - >/dev/null
+exec "$(dirname "$(readlink -f "$0")")/target/release/filem8_view" "$@"

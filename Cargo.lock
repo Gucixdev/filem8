@@ -791,6 +791,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "filem8_view"
+version = "0.1.0"
+dependencies = [
+ "fm8-core",
+ "fm8-preview",
+ "fm8-ui",
+ "softbuffer",
+ "winit",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
