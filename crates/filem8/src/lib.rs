@@ -1,4 +1,5 @@
 pub mod app;
+pub mod archive;
 pub mod geticons;
 pub mod iconset;
 pub mod preview_pane;

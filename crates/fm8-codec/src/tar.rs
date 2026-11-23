@@ -9,6 +9,10 @@ pub struct Entry {
     pub mode: u32,
     /// Offset of the member data within the (decompressed) buffer.
     pub data: usize,
+    /// Type flag: b'0' file, b'5' dir, b'2' symlink, b'1' hard link, ...
+    pub ty: u8,
+    /// Link target for symlinks / hard links.
+    pub link: String,
 }
 
 fn oct(b: &[u8]) -> u64 {
@@ -52,7 +56,7 @@ pub fn list(buf: &[u8], cap: usize) -> (Vec<Entry>, bool) {
                 // pax size= replaces the header field (members over 8 GiB), also for finding the next header
                 if let Some(x) = pax_size.take() { size = x; let Some(n) = end_of(size) else { break }; next = n }
                 let is_dir = ty == b'5' || name.ends_with('/');
-                v.push(Entry { name, size, is_dir, mtime: oct(&h[136..148]), mode: oct(&h[100..108]) as u32, data });
+                v.push(Entry { name, size, is_dir, mtime: oct(&h[136..148]), mode: oct(&h[100..108]) as u32, data, ty: if ty == 0 { b'0' } else { ty }, link: cstr(&h[157..257]) });
             }
         }
         p = next;
