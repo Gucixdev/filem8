@@ -10,6 +10,7 @@ theme when that runs. fm8-ui stays until this has the same features.
 | alt-t, ctrl-r | trash view: the list shows what was trashed (newest first); ctrl-r restores the marked rows, delete removes them for good after a question, alt-t leaves |
 | ctrl-, | settings view: show hidden files, sort key and order, confirm before trash; Enter changes the row, the folder follows at once and `~/.config/filem8/settings` (the file `filem8` uses) is written |
 | ctrl-t, ctrl-w, ctrl-tab, ctrl-shift-tab | new tab (same folder), close tab, next tab, previous tab; the tab bar shows with two or more tabs and a click switches; each tab keeps its folder and cursor row |
+| f9, ctrl-d | places sidebar (Home, XDG folders, Trash, bookmarks, mounted disks with free space); ctrl-d bookmarks the folder shown in `~/.config/gtk-3.0/bookmarks`, the file `filem8` uses |
 | enter | open the folder, or go to the path typed in the bar |
 | alt-up | parent folder, cursor on the one just left |
 | ctrl-l | focus the path bar |

@@ -6,6 +6,7 @@ pub mod thumbs;
 
 use fm8_core::class::Class;
 use fm8_core::listing::{compare, human_size, list_blocking, Entry, Sort, SortKey};
+use fm8_core::places::{self, Bookmark};
 use fm8_core::settings::{config_dir, Prefs};
 use lazyui::prelude::*;
 use fm8_core::fileops;
@@ -33,6 +34,10 @@ pub struct App {
     /// the folder tabs: each remembers its folder and the row the cursor was on; `tab` is the one shown
     tabs: Vec<Tab>,
     tab: usize,
+    /// the places sidebar: what each row of it opens
+    places: Vec<Target>,
+    bookmarks: Vec<Bookmark>,
+    bookmarks_file: PathBuf,
     /// the trash view: while it is Some the list shows these items and the folder commands are off
     trash: Option<Vec<fm8_core::trashbin::TrashItem>>,
     /// the settings view: the list shows the preferences and Enter changes the one under the cursor
@@ -57,7 +62,15 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  buttonbar id=tabs items=@tabnames active=tab size=@tabh:0\n  row\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=purge bind=purge title=\"Delete for good\" from=purgetext buttons=\"Delete,Cancel\" default=1\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  buttonbar id=tabs items=@tabnames active=tab size=@tabh:0\n  row\n    list id=places size=@sw:0\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=purge bind=purge title=\"Delete for good\" from=purgetext buttons=\"Delete,Cancel\" default=1\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+
+/// What a row of the places sidebar does.
+#[derive(Clone, Debug, PartialEq)]
+enum Target {
+    Dir(PathBuf),
+    Trash,
+    Header,
+}
 
 /// One folder tab.
 struct Tab {
@@ -78,6 +91,8 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-x", "cut");
     ui.hotkey("ctrl-v", "paste");
     ui.hotkey("ctrl-p", "pane");
+    ui.hotkey("f9", "side");
+    ui.hotkey("ctrl-d", "bookmark");
     ui.hotkey("alt-t", "bin");
     ui.hotkey("ctrl-t", "newtab");
     ui.hotkey("ctrl-w", "closetab");
@@ -115,12 +130,12 @@ pub fn describe(e: &Entry) -> String {
 
 impl App {
     pub fn open(dir: &Path) -> App {
-        App::open_with(dir, config_dir().join("settings"))
+        App::open_with(dir, config_dir().join("settings"), places::gtk_bookmarks_file())
     }
 
     /// Like `open`, with the preferences kept in `prefs_file` (the file `filem8` itself uses by default).
-    pub fn open_with(dir: &Path, prefs_file: PathBuf) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, tabs: Vec::new(), tab: 0, trash: None, settings: false, prefs: Prefs::load(&prefs_file), prefs_file, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
+    pub fn open_with(dir: &Path, prefs_file: PathBuf, bookmarks_file: PathBuf) -> App {
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, tabs: Vec::new(), tab: 0, places: Vec::new(), bookmarks: places::load_bookmarks(&bookmarks_file), bookmarks_file, trash: None, settings: false, prefs: Prefs::load(&prefs_file), prefs_file, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
         a.go(dir);
         a.tabs = vec![Tab { dir: a.dir.clone(), at: 0 }];
         a
@@ -177,6 +192,25 @@ impl App {
         self.shown = self.entries.len();
         ui.set("count", self.entries.len() as f64);
         self.show_tabs(ui);
+        self.show_places(ui);
+    }
+
+    /// The sidebar: Home and the XDG folders, the trash, bookmarks (ctrl-d adds the folder shown), mounted disks.
+    fn show_places(&mut self, ui: &mut Ui) {
+        let mut rows: Vec<(String, Target)> = vec![("Home".into(), Target::Dir(fm8_core::paths::home()))];
+        rows.extend(places::user_dirs().into_iter().filter(|b| b.path.is_dir()).map(|b| (b.label, Target::Dir(b.path))));
+        rows.push(("Trash".into(), Target::Trash));
+        rows.push(("-- Bookmarks".into(), Target::Header));
+        rows.extend(self.bookmarks.iter().map(|b| (b.label.clone(), Target::Dir(b.path.clone()))));
+        rows.push(("-- Devices".into(), Target::Header));
+        for m in places::mounts() {
+            let free = places::space(&m.path).map(|(_, f)| format!("\t{}", human_size(f))).unwrap_or_default();
+            rows.push((format!("{}{free}", m.label), Target::Dir(m.path)));
+        }
+        let at = ui.list_selected("places").unwrap_or(0);
+        ui.set_list("places", rows.iter().map(|(t, _)| t.clone()).collect());
+        ui.select_list("places", at.min(rows.len() - 1));
+        self.places = rows.into_iter().map(|(_, t)| t).collect();
     }
 
     /// The tab bar: hidden with one tab, else one label per folder (the folder's own name).
@@ -398,6 +432,10 @@ impl App {
     }
 
     fn handle_event(&mut self, ui: &mut Ui, e: &UiEvent) {
+        if e.id == "places" && (self.trash.is_some() || self.settings) {
+            self.trash = None;
+            self.settings = false;
+        }
         if self.settings && e.id != "bar" && !(e.id == "app" && e.kind == "poll") {
             return self.handle_settings(ui, e);
         }
@@ -608,6 +646,36 @@ impl App {
                     self.switch_tab(ui, n);
                 }
             }
+            ("places", "activate") => match usize::try_from(e.index).ok().and_then(|i| self.places.get(i)).cloned() {
+                Some(Target::Dir(p)) => {
+                    self.go(&p);
+                    self.show(ui);
+                    ui.focus("files");
+                }
+                Some(Target::Trash) => {
+                    self.load_trash(ui, "trash opened");
+                    ui.focus("files");
+                }
+                _ => {}
+            },
+            ("app", "side") => {
+                let open = ui.number("sw") > 0.0;
+                ui.set("sw", if open { 0.0 } else { 24.0 });
+                ui.focus(if open { "files" } else { "places" });
+            }
+            ("app", "bookmark") => {
+                let dir = self.dir.clone();
+                let msg = if places::add_bookmark(&mut self.bookmarks, &dir) {
+                    match places::save_bookmarks(&self.bookmarks_file, &self.bookmarks) {
+                        Ok(()) => format!("bookmarked {}", dir.display()),
+                        Err(e) => format!("bookmark not saved: {e}"),
+                    }
+                } else {
+                    "already bookmarked".to_string()
+                };
+                self.show_places(ui);
+                ui.set_text("status", &msg);
+            }
             ("app", "up") => {
                 if let Some(parent) = self.dir.parent().map(Path::to_path_buf) {
                     let from = self.dir.clone();
@@ -635,7 +703,7 @@ mod tests {
     fn open_t(d: &Path) -> App {
         let file = d.with_extension("prefs");
         std::fs::write(&file, "confirm_trash = true\n").unwrap();
-        App::open_with(d, file)
+        App::open_with(d, file, d.with_extension("bookmarks"))
     }
 
     fn tree(name: &str) -> PathBuf {
@@ -1082,7 +1150,7 @@ mod tests {
         handle_all(&mut app, &mut ui);
         ui.render(&mut c);
         assert!(c.to_text().contains(".dot"), "{}", c.to_text());
-        let again = App::open_with(&d, file.clone());
+        let again = App::open_with(&d, file.clone(), d.with_extension("bookmarks"));
         assert!(again.entries.iter().any(|e| e.name == ".dot"), "a new app reads the saved file");
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -1092,7 +1160,7 @@ mod tests {
         let d = tree("noask");
         let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
-        let mut app = App::open_with(&d, d.with_extension("prefs2"));
+        let mut app = App::open_with(&d, d.with_extension("prefs2"), d.with_extension("bookmarks2"));
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(100, 12, lazyui::canvas::Caps::FULL);
@@ -1144,6 +1212,46 @@ mod tests {
         ctrl(&mut ui, Key::Char('w'), false);
         handle_all(&mut app, &mut ui);
         assert_eq!(app.tabs.len(), 1, "the last tab stays");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_sidebar_opens_places_and_ctrl_d_bookmarks_the_folder() {
+        let d = tree("places");
+        let mut app = open_t(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(100, 14, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        assert_eq!(ui.number("sw"), 0.0, "the sidebar starts closed");
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        let docs = d.join("docs").canonicalize().unwrap();
+        assert_eq!(app.dir, docs);
+        ui.dispatch(&Event::Key(Key::Char('d'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        let saved = std::fs::read_to_string(d.with_extension("bookmarks")).unwrap();
+        assert!(saved.contains("docs"), "{saved}");
+        ui.dispatch(&Event::Key(Key::Char('d'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("already bookmarked"), "{}", c.to_text());
+        ui.dispatch(&Event::Key(Key::Up, Mods { alt: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        assert_eq!(app.dir, d.canonicalize().unwrap());
+        ui.dispatch(&Event::Key(Key::F(9), Mods::default()));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert_eq!(ui.number("sw"), 24.0);
+        assert!(c.to_text().contains("Home") && c.to_text().contains("Trash") && c.to_text().contains("Bookmarks"), "{}", c.to_text());
+        let row = app.places.iter().position(|t| *t == Target::Dir(docs.clone())).expect("the bookmark is a row");
+        ui.select_list("places", row);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert_eq!(app.dir, docs, "Enter on the bookmark goes there");
+        let again = App::open_with(&d, d.with_extension("prefs"), d.with_extension("bookmarks"));
+        assert_eq!(again.bookmarks.len(), 1, "a new app reads the bookmark back");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

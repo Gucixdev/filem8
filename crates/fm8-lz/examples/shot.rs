@@ -55,4 +55,6 @@ fn main() {
     ui.dispatch(&Event::Key(Key::Char(','), Mods { ctrl: true, ..Mods::default() }));
     ui.dispatch(&Event::Key(Key::Char('t'), Mods { ctrl: true, ..Mods::default() }));
     shot(&mut ui, &mut app, &format!("{out}-tabs.png"));
+    ui.dispatch(&Event::Key(Key::F(9), Mods::default()));
+    shot(&mut ui, &mut app, &format!("{out}-places.png"));
 }
