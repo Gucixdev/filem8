@@ -8,6 +8,7 @@ theme when that runs. fm8-ui stays until this has the same features.
 | space, ctrl-a, ctrl-click | mark rows in the list (`*`); delete, ctrl-c and ctrl-x then act on all of them |
 | ctrl-p | preview pane: text, archive listing, picture, folder size, metadata of the entry under the cursor (loaded off the UI thread by `fm8-preview`) |
 | ctrl-t, ctrl-r | trash view: the list shows what was trashed (newest first); ctrl-r restores the marked rows, delete removes them for good after a question, ctrl-t leaves |
+| ctrl-, | settings view: show hidden files, sort key and order, confirm before trash; Enter changes the row, the folder follows at once and `~/.config/filem8/settings` (the file `filem8` uses) is written |
 | enter | open the folder, or go to the path typed in the bar |
 | alt-up | parent folder, cursor on the one just left |
 | ctrl-l | focus the path bar |

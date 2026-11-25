@@ -5,7 +5,8 @@ pub mod preview;
 pub mod thumbs;
 
 use fm8_core::class::Class;
-use fm8_core::listing::{compare, human_size, list_blocking, Entry, Sort};
+use fm8_core::listing::{compare, human_size, list_blocking, Entry, Sort, SortKey};
+use fm8_core::settings::{config_dir, Prefs};
 use lazyui::prelude::*;
 use fm8_core::fileops;
 use lazyui::media::Image;
@@ -31,6 +32,10 @@ pub struct App {
     /// a copy or move running on its own thread
     /// the trash view: while it is Some the list shows these items and the folder commands are off
     trash: Option<Vec<fm8_core::trashbin::TrashItem>>,
+    /// the settings view: the list shows the preferences and Enter changes the one under the cursor
+    settings: bool,
+    prefs: Prefs,
+    prefs_file: PathBuf,
     previewer: preview::Previewer,
     /// request number of the newest preview asked for, and what it was for
     pv_seq: u64,
@@ -65,12 +70,28 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-v", "paste");
     ui.hotkey("ctrl-p", "pane");
     ui.hotkey("ctrl-t", "bin");
+    ui.hotkey("ctrl-,", "settings");
     ui.hotkey("ctrl-r", "restore");
     ui.hotkey("f2", "rename");
     ui.hotkey("ctrl-n", "newdir");
     ui.every(0.2, "poll");
     ui
 }
+
+struct Setting {
+    key: &'static str,
+    label: &'static str,
+    /// empty: an on/off switch
+    choices: &'static [&'static str],
+}
+
+/// The preferences this window offers; the names and values are those of `filem8`'s settings file.
+const SETTINGS: &[Setting] = &[
+    Setting { key: "show_hidden", label: "Show hidden files", choices: &[] },
+    Setting { key: "sort", label: "Sort by", choices: &["name", "size", "modified", "type", "perms", "owner", "items"] },
+    Setting { key: "sort_ascending", label: "Ascending order", choices: &[] },
+    Setting { key: "confirm_trash", label: "Confirm before moving to trash", choices: &[] },
+];
 
 /// The text of the properties window for one entry.
 pub fn describe(e: &Entry) -> String {
@@ -81,7 +102,12 @@ pub fn describe(e: &Entry) -> String {
 
 impl App {
     pub fn open(dir: &Path) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, trash: None, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
+        App::open_with(dir, config_dir().join("settings"))
+    }
+
+    /// Like `open`, with the preferences kept in `prefs_file` (the file `filem8` itself uses by default).
+    pub fn open_with(dir: &Path, prefs_file: PathBuf) -> App {
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, trash: None, settings: false, prefs: Prefs::load(&prefs_file), prefs_file, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
         a.go(dir);
         a
     }
@@ -91,8 +117,11 @@ impl App {
     pub fn go(&mut self, dir: &Path) {
         match list_blocking(dir) {
             Ok(mut v) => {
-                v.retain(|e| !e.hidden);
-                v.sort_by(|a, b| compare(a, b, Sort::default()));
+                if !self.prefs.flag("show_hidden") {
+                    v.retain(|e| !e.hidden);
+                }
+                let sort = self.sort();
+                v.sort_by(|a, b| compare(a, b, sort));
                 self.dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
                 self.entries = v;
                 self.error = None;
@@ -101,6 +130,19 @@ impl App {
             }
             Err(e) => self.error = Some(e),
         }
+    }
+
+    fn sort(&self) -> Sort {
+        let key = match self.prefs.get("sort").as_str() {
+            "size" => SortKey::Size,
+            "modified" => SortKey::Modified,
+            "type" => SortKey::Type,
+            "perms" => SortKey::Perms,
+            "owner" => SortKey::Owner,
+            "items" => SortKey::Items,
+            _ => SortKey::Name,
+        };
+        Sort { key, ascending: self.prefs.flag("sort_ascending"), dirs_first: true }
     }
 
     /// Put what the app knows into the `Ui`: the path text, the rows, the status line.
@@ -161,8 +203,11 @@ impl App {
 
     /// Keep the preview pane on the entry under the cursor: ask for it when it changed, show an answer when it arrives.
     fn sync_preview(&mut self, ui: &mut Ui) {
-        if ui.number("pw") <= 0.0 || self.trash.is_some() {
-            self.pv_path = None;
+        if ui.number("pw") <= 0.0 || self.trash.is_some() || self.settings {
+            if self.pv_path.take().is_some() {
+                ui.set_list("pv", Vec::new());
+                ui.set("pvmode", 0.0);
+            }
             return;
         }
         let at = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
@@ -250,6 +295,45 @@ impl App {
         }
     }
 
+    /// The settings view (ctrl-, in and out): one row per preference, Enter changes the one under the cursor, the change
+    /// is applied to the folder at once and written to the preferences file.
+    fn show_settings(&mut self, ui: &mut Ui, msg: &str) {
+        let rows = SETTINGS.iter().map(|f| format!("{}\t{}", f.label, self.prefs.get(f.key))).collect();
+        let at = ui.list_selected("files").unwrap_or(0);
+        ui.set_list("files", rows);
+        ui.select_list("files", at.min(SETTINGS.len() - 1));
+        ui.set("mode", 0.0);
+        ui.set_text("path", "settings");
+        ui.set_text("status", msg);
+        self.settings = true;
+    }
+
+    fn handle_settings(&mut self, ui: &mut Ui, e: &UiEvent) {
+        match (e.id.as_str(), e.kind.as_str()) {
+            ("app", "settings") => {
+                self.settings = false;
+                self.refresh(ui, "back in the folder");
+            }
+            ("files", "activate") => {
+                let Some(f) = usize::try_from(e.index).ok().and_then(|i| SETTINGS.get(i)) else { return };
+                let now = self.prefs.get(f.key);
+                let next = match f.choices {
+                    [] => if now == "true" { "false" } else { "true" }.to_string(),
+                    list => list[(list.iter().position(|c| *c == now).unwrap_or(0) + 1) % list.len()].to_string(),
+                };
+                self.prefs.set(f.key, &next);
+                let saved = self.prefs.save(&self.prefs_file);
+                let dir = self.dir.clone();
+                self.go(&dir);
+                self.show_settings(ui, &match saved {
+                    Ok(()) => format!("{} = {next}", f.key),
+                    Err(e) => format!("not saved: {e}"),
+                });
+            }
+            _ => {}
+        }
+    }
+
     fn trash_picked(&self, ui: &Ui) -> Vec<fm8_core::trashbin::TrashItem> {
         let marks = ui.list_marks("files");
         let idx: Vec<usize> = if marks.is_empty() { ui.list_selected("files").into_iter().collect() } else { marks };
@@ -271,6 +355,12 @@ impl App {
     }
 
     fn handle_event(&mut self, ui: &mut Ui, e: &UiEvent) {
+        if self.settings && e.id != "bar" && !(e.id == "app" && e.kind == "poll") {
+            return self.handle_settings(ui, e);
+        }
+        if e.id == "app" && e.kind == "settings" {
+            return self.show_settings(ui, "Enter changes a setting, ctrl-, leaves");
+        }
         if self.trash.is_some() && !(e.id == "app" && e.kind == "poll") && e.id != "bar" {
             return self.handle_trash(ui, e);
         }
@@ -350,9 +440,14 @@ impl App {
             }
             ("app", "trash") => {
                 if let Some((paths, name)) = self.targets(ui) {
-                    ui.set_text("asktext", &format!("Move {name} to the trash?"));
                     self.pending = Some(paths);
-                    ui.set("ask", 1.0);
+                    if self.prefs.flag("confirm_trash") {
+                        ui.set_text("asktext", &format!("Move {name} to the trash?"));
+                        ui.set("ask", 1.0);
+                    } else {
+                        let yes = UiEvent { id: "ask".into(), kind: "activate".into(), text: String::new(), index: 0, number: 0.0 };
+                        self.handle_event(ui, &yes);
+                    }
                 }
             }
             ("ask", "activate") if e.index == 0 => {
@@ -470,6 +565,13 @@ mod tests {
     /// Tests that point the trash at their own folder run one at a time.
     static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// An app whose preferences live beside the test folder (not in it), with the trash question switched on.
+    fn open_t(d: &Path) -> App {
+        let file = d.with_extension("prefs");
+        std::fs::write(&file, "confirm_trash = true\n").unwrap();
+        App::open_with(d, file)
+    }
+
     fn tree(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("fm8-lz-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -493,7 +595,7 @@ mod tests {
     #[test]
     fn rows_are_folders_first_hidden_left_out_with_sizes() {
         let d = tree("rows");
-        let app = App::open(&d);
+        let app = open_t(&d);
         let rows: Vec<String> = app.entries.iter().map(row).collect();
         assert_eq!(rows, vec!["/docs\t0 items", "/music\t1 items", " notes.txt\t5 B"], "{rows:?}");
         let _ = std::fs::remove_dir_all(&d);
@@ -502,7 +604,7 @@ mod tests {
     #[test]
     fn enter_goes_into_a_folder_and_alt_up_comes_back_onto_it() {
         let d = tree("nav");
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(60, 10, lazyui::canvas::Caps::FULL);
@@ -523,7 +625,7 @@ mod tests {
     #[test]
     fn a_path_typed_in_the_bar_is_opened_and_a_file_is_refused() {
         let d = tree("bar");
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(60, 10, lazyui::canvas::Caps::FULL);
@@ -545,7 +647,7 @@ mod tests {
             px.copy_from_slice(&[200, 30, 30, 255]);
         }
         std::fs::write(d.join("a.png"), fm8_codec::png::encode(&img)).unwrap();
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let i = app.entries.iter().position(|e| e.name == "a.png").unwrap();
@@ -568,7 +670,7 @@ mod tests {
     #[test]
     fn ctrl_i_opens_the_properties_window_for_the_selected_entry() {
         let d = tree("props");
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(80, 20, lazyui::canvas::Caps::FULL);
@@ -593,7 +695,7 @@ mod tests {
             return;
         }
         let d = tree("icons");
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         app.handle(&mut ui, &UiEvent { id: "grid".into(), kind: "need".into(), text: String::new(), index: 0, number: 1.0 });
@@ -616,7 +718,7 @@ mod tests {
         // the trash of this test lives inside the test tree, so nothing of the real one is touched
         let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
@@ -652,7 +754,7 @@ mod tests {
     #[test]
     fn f2_renames_and_ctrl_n_makes_a_folder_through_a_name_prompt() {
         let d = tree("prompt");
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
@@ -700,7 +802,7 @@ mod tests {
     #[test]
     fn copy_and_cut_paste_run_off_the_ui_thread_and_ctrl_z_takes_them_back() {
         let d = tree("paste");
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
@@ -759,7 +861,7 @@ mod tests {
         std::fs::write(d.join("b.txt"), "b").unwrap();
         let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
@@ -790,7 +892,7 @@ mod tests {
     fn the_preview_pane_follows_the_cursor_and_shows_text_then_a_folder() {
         let d = tree("pane");
         std::fs::write(d.join("notes.txt"), "hello preview\nsecond line\n").unwrap();
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(100, 12, lazyui::canvas::Caps::FULL);
@@ -841,7 +943,7 @@ mod tests {
         std::fs::write(d.join("gone-b.txt"), "b").unwrap();
         let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
-        let mut app = App::open(&d);
+        let mut app = open_t(&d);
         let mut ui = ui();
         app.show(&mut ui);
         let mut c = lazyui::canvas::Canvas::new(100, 12, lazyui::canvas::Caps::FULL);
@@ -883,6 +985,58 @@ mod tests {
         handle_all(&mut app, &mut ui);
         ui.render(&mut c);
         assert!(c.to_text().contains("gone-b.txt") && !c.to_text().contains("\t"), "{}", c.to_text());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn settings_change_the_folder_at_once_and_are_saved() {
+        let d = tree("prefs");
+        std::fs::write(d.join(".dot"), "x").unwrap();
+        let mut app = open_t(&d);
+        let file = d.with_extension("prefs");
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(100, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        assert!(!app.entries.iter().any(|e| e.name == ".dot"), "hidden files are off by default");
+        ui.focus("files");
+        ui.dispatch(&Event::Key(Key::Char(','), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("Show hidden files") && c.to_text().contains("Sort by"), "{}", c.to_text());
+        app.handle(&mut ui, &UiEvent::of("app", "poll", ""));
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert!(std::fs::read_to_string(&file).unwrap().contains("show_hidden = true"));
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert!(std::fs::read_to_string(&file).unwrap().contains("sort = size"));
+        ui.dispatch(&Event::Key(Key::Char(','), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains(".dot"), "{}", c.to_text());
+        let again = App::open_with(&d, file.clone());
+        assert!(again.entries.iter().any(|e| e.name == ".dot"), "a new app reads the saved file");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn trash_goes_without_a_question_when_confirm_is_off() {
+        let d = tree("noask");
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
+        let mut app = App::open_with(&d, d.with_extension("prefs2"));
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(100, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        let i = app.entries.iter().position(|e| e.name == "notes.txt").unwrap();
+        ui.select_list("files", i);
+        ui.dispatch(&Event::Key(Key::Delete, Mods::default()));
+        handle_all(&mut app, &mut ui);
+        assert!(!d.join("notes.txt").exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

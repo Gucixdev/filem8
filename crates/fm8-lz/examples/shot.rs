@@ -50,4 +50,6 @@ fn main() {
         ui.dispatch(&Event::Key(Key::Down, Mods::default()));
     }
     shot(&mut ui, &mut app, &format!("{out}-pane-picture.png"));
+    ui.dispatch(&Event::Key(Key::Char(','), Mods { ctrl: true, ..Mods::default() }));
+    shot(&mut ui, &mut app, &format!("{out}-settings.png"));
 }
