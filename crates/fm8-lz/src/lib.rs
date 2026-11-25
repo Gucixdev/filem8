@@ -23,6 +23,13 @@ pub struct App {
     history: fileops::History,
     /// what the open trash question is about
     pending: Option<PathBuf>,
+    /// what the open name prompt is for
+    prompt: Option<Prompt>,
+}
+
+enum Prompt {
+    Rename(PathBuf),
+    NewDir,
 }
 
 /// The one line a row shows: a folder mark, the name, the size.
@@ -31,7 +38,7 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
 
 /// The `Ui` of the folder view, with its keys. ctrl-g switches between the list and the thumbnail grid.
 pub fn ui() -> Ui {
@@ -42,6 +49,8 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-i", "info");
     ui.hotkey("delete", "trash");
     ui.hotkey("ctrl-z", "undo");
+    ui.hotkey("f2", "rename");
+    ui.hotkey("ctrl-n", "newdir");
     ui.every(0.2, "poll");
     ui
 }
@@ -55,7 +64,7 @@ pub fn describe(e: &Entry) -> String {
 
 impl App {
     pub fn open(dir: &Path) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None };
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None };
         a.go(dir);
         a
     }
@@ -190,6 +199,44 @@ impl App {
                 }
             }
             ("ask", _) => self.pending = None,
+            ("app", "rename") => {
+                let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
+                if let Some(en) = i.and_then(|i| self.entries.get(i)) {
+                    ui.set_text("pname", &en.name);
+                    ui.set_text("ptext", &format!("Rename {} to:", en.name));
+                    self.prompt = Some(Prompt::Rename(en.path.clone()));
+                    ui.set("prompt", 1.0);
+                }
+            }
+            ("app", "newdir") => {
+                ui.set_text("pname", "New folder");
+                ui.set_text("ptext", "New folder in this directory:");
+                self.prompt = Some(Prompt::NewDir);
+                ui.set("prompt", 1.0);
+            }
+            ("prompt", "activate") if e.index == 0 => {
+                let name = e.text.trim().to_string();
+                let Some(what) = self.prompt.take() else { return };
+                if name.is_empty() || name.contains('/') {
+                    self.refresh(ui, "that is not a usable name");
+                    return;
+                }
+                let done = match &what {
+                    Prompt::Rename(p) => fileops::rename(p, &name).map(|op| (op, format!("renamed to {name}"))),
+                    Prompt::NewDir => fileops::new_dir(&self.dir, &name).map(|op| (op, format!("created {name}"))),
+                };
+                match done {
+                    Ok((op, msg)) => {
+                        self.history.push(op);
+                        self.refresh(ui, &msg);
+                        if let Some(i) = self.entries.iter().position(|en| en.name == name) {
+                            ui.select_list("files", i);
+                        }
+                    }
+                    Err(e) => self.refresh(ui, &e),
+                }
+            }
+            ("prompt", _) => self.prompt = None,
             ("app", "undo") => {
                 let msg = match self.history.undo() {
                     Ok(s) | Err(s) => s,
@@ -391,6 +438,54 @@ mod tests {
         handle_all(&mut app, &mut ui);
         assert!(d.join("notes.txt").exists(), "undo restores it");
         assert!(app.entries.iter().any(|e| e.name == "notes.txt"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn f2_renames_and_ctrl_n_makes_a_folder_through_a_name_prompt() {
+        let d = tree("prompt");
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::F(2));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("> notes.txt"), "{}", c.to_text());
+        for _ in 0..3 {
+            key(&mut ui, Key::Backspace);
+        }
+        for ch in "md".chars() {
+            key(&mut ui, Key::Char(ch));
+        }
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert!(d.join("notes.md").exists() && !d.join("notes.txt").exists());
+        assert_eq!(ui.list_selected("files").and_then(|i| app.entries.get(i)).map(|e| e.name.as_str()), Some("notes.md"));
+        ui.dispatch(&Event::Key(Key::Char('n'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert!(d.join("New folder").is_dir());
+        key(&mut ui, Key::F(2));
+        handle_all(&mut app, &mut ui);
+        for _ in 0..12 {
+            key(&mut ui, Key::Backspace);
+        }
+        for ch in "a/b".chars() {
+            key(&mut ui, Key::Char(ch));
+        }
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("not a usable name"), "{}", c.to_text());
+        ui.dispatch(&Event::Key(Key::Char('z'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        assert!(!d.join("New folder").exists(), "undo takes the new folder away again");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

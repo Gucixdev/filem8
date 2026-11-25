@@ -11,7 +11,9 @@ theme when that runs. fm8-ui stays until this has the same features.
 | ctrl-g | switch between the list and the thumbnail grid |
 | ctrl-i | properties window (floats, drag the title, esc closes) |
 | delete | ask, then move the entry to the trash |
-| ctrl-z | undo the last change (trash) |
+| f2 | rename the entry (a name box) |
+| ctrl-n | new folder (a name box) |
+| ctrl-z | undo the last change (trash, rename, new folder) |
 
 Thumbnails and theme icons are made on a worker thread (`src/thumbs.rs`): pictures are decoded with fm8-codec and shrunk to
 128 px, other entries get an icon from the first usable PNG icon theme (AdwaitaLegacy and Adwaita are tried by name when the
