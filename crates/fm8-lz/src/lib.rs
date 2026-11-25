@@ -29,6 +29,8 @@ pub struct App {
     /// what ctrl-c or ctrl-x took, and whether it is to be moved
     clip: Option<(Vec<PathBuf>, bool)>,
     /// a copy or move running on its own thread
+    /// the trash view: while it is Some the list shows these items and the folder commands are off
+    trash: Option<Vec<fm8_core::trashbin::TrashItem>>,
     previewer: preview::Previewer,
     /// request number of the newest preview asked for, and what it was for
     pv_seq: u64,
@@ -47,7 +49,7 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  row\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  row\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=purge bind=purge title=\"Delete for good\" from=purgetext buttons=\"Delete,Cancel\" default=1\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
 
 /// The `Ui` of the folder view, with its keys. ctrl-g switches between the list and the thumbnail grid.
 pub fn ui() -> Ui {
@@ -62,6 +64,8 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-x", "cut");
     ui.hotkey("ctrl-v", "paste");
     ui.hotkey("ctrl-p", "pane");
+    ui.hotkey("ctrl-t", "bin");
+    ui.hotkey("ctrl-r", "restore");
     ui.hotkey("f2", "rename");
     ui.hotkey("ctrl-n", "newdir");
     ui.every(0.2, "poll");
@@ -77,7 +81,7 @@ pub fn describe(e: &Entry) -> String {
 
 impl App {
     pub fn open(dir: &Path) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, trash: None, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
         a.go(dir);
         a
     }
@@ -157,7 +161,7 @@ impl App {
 
     /// Keep the preview pane on the entry under the cursor: ask for it when it changed, show an answer when it arrives.
     fn sync_preview(&mut self, ui: &mut Ui) {
-        if ui.number("pw") <= 0.0 {
+        if ui.number("pw") <= 0.0 || self.trash.is_some() {
             self.pv_path = None;
             return;
         }
@@ -194,7 +198,85 @@ impl App {
         }
     }
 
+    /// The trash view, entered and left with ctrl-t: rows are `name<TAB>deleted`, ctrl-r restores the marked rows (or the
+    /// cursor row) to where they came from, delete removes them for good after a question.
+    fn handle_trash(&mut self, ui: &mut Ui, e: &UiEvent) {
+        match (e.id.as_str(), e.kind.as_str()) {
+            ("app", "poll") => self.handle_event(ui, e),
+            ("app", "bin") => {
+                self.trash = None;
+                self.pending = None;
+                self.refresh(ui, "back in the folder");
+            }
+            ("app", "restore") => {
+                let picked = self.trash_picked(ui);
+                let (mut done, mut failed) = (0, None);
+                for it in &picked {
+                    match fm8_core::trashbin::restore(it) {
+                        Ok(()) => done += 1,
+                        Err(e) => failed = Some(e),
+                    }
+                }
+                self.load_trash(ui, &match failed {
+                    Some(e) => format!("restored {done}, then: {e}"),
+                    None => format!("restored {done}"),
+                });
+            }
+            ("app", "trash") => {
+                let picked = self.trash_picked(ui);
+                if !picked.is_empty() {
+                    let what = if picked.len() == 1 { picked[0].original.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{} items", picked.len()) };
+                    ui.set_text("purgetext", &format!("Delete {what} for good? This cannot be undone."));
+                    self.pending = Some(picked.into_iter().map(|i| i.trashed).collect());
+                    ui.set("purge", 1.0);
+                }
+            }
+            ("purge", "activate") if e.index == 0 => {
+                let gone = self.pending.take().unwrap_or_default();
+                let items: Vec<_> = self.trash.iter().flatten().filter(|i| gone.contains(&i.trashed)).cloned().collect();
+                let mut failed = None;
+                for it in &items {
+                    if let Err(e) = fm8_core::trashbin::purge(it) {
+                        failed = Some(e);
+                    }
+                }
+                self.load_trash(ui, &match failed {
+                    Some(e) => format!("deleting failed: {e}"),
+                    None => format!("deleted {} for good", items.len()),
+                });
+            }
+            ("purge", _) => self.pending = None,
+            _ => {}
+        }
+    }
+
+    fn trash_picked(&self, ui: &Ui) -> Vec<fm8_core::trashbin::TrashItem> {
+        let marks = ui.list_marks("files");
+        let idx: Vec<usize> = if marks.is_empty() { ui.list_selected("files").into_iter().collect() } else { marks };
+        idx.iter().filter_map(|&i| self.trash.as_ref()?.get(i)).cloned().collect()
+    }
+
+    /// Read the trash again (newest first) and show it.
+    fn load_trash(&mut self, ui: &mut Ui, msg: &str) {
+        let at = ui.list_selected("files").unwrap_or(0);
+        let mut items = fm8_core::trashbin::list_roots(&fm8_core::trashbin::roots());
+        items.sort_by(|a, b| b.deleted.cmp(&a.deleted));
+        let rows = items.iter().map(|i| format!("{}\t{}", i.original.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), i.deleted.replace('T', " "))).collect();
+        ui.set_list("files", rows);
+        ui.select_list("files", at.min(items.len().saturating_sub(1)));
+        ui.set("mode", 0.0);
+        ui.set_text("path", "trash");
+        ui.set_text("status", &format!("{msg}; {} items in the trash (ctrl-r restores, delete removes, ctrl-t leaves)", items.len()));
+        self.trash = Some(items);
+    }
+
     fn handle_event(&mut self, ui: &mut Ui, e: &UiEvent) {
+        if self.trash.is_some() && !(e.id == "app" && e.kind == "poll") && e.id != "bar" {
+            return self.handle_trash(ui, e);
+        }
+        if e.id == "app" && e.kind == "bin" {
+            return self.load_trash(ui, "trash opened");
+        }
         match (e.id.as_str(), e.kind.as_str()) {
             ("bar", "activate") => {
                 let p = PathBuf::from(&e.text);
@@ -385,6 +467,9 @@ mod tests {
     use super::*;
     use lazyui::input::{Event, Key, Mods};
 
+    /// Tests that point the trash at their own folder run one at a time.
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn tree(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("fm8-lz-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -529,6 +614,7 @@ mod tests {
     fn delete_asks_then_moves_to_the_trash_and_ctrl_z_brings_it_back() {
         let d = tree("trash");
         // the trash of this test lives inside the test tree, so nothing of the real one is touched
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
         let mut app = App::open(&d);
         let mut ui = ui();
@@ -671,6 +757,7 @@ mod tests {
     fn marked_rows_are_trashed_and_pasted_together() {
         let d = tree("marks");
         std::fs::write(d.join("b.txt"), "b").unwrap();
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
         let mut app = App::open(&d);
         let mut ui = ui();
@@ -745,5 +832,57 @@ mod tests {
             _ => panic!("lines expected"),
         }
         assert!(matches!(preview::shown(Preview::Error("no".into())), preview::Shown::Lines(l) if l == ["no"]));
+    }
+
+    #[test]
+    fn the_trash_view_restores_and_deletes_for_good() {
+        let d = tree("bin");
+        std::fs::write(d.join("gone-a.txt"), "a").unwrap();
+        std::fs::write(d.join("gone-b.txt"), "b").unwrap();
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(100, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        let at = |app: &App, n: &str| app.entries.iter().position(|e| e.name == n).unwrap();
+        for n in ["gone-a.txt", "gone-b.txt"] {
+            ui.select_list("files", at(&app, n));
+            ui.dispatch(&Event::Key(Key::Delete, Mods::default()));
+            handle_all(&mut app, &mut ui);
+            ui.render(&mut c);
+            key(&mut ui, Key::Left);
+            key(&mut ui, Key::Enter);
+            handle_all(&mut app, &mut ui);
+        }
+        assert!(!d.join("gone-a.txt").exists() && !d.join("gone-b.txt").exists());
+        let ctrl = |ui: &mut Ui, ch: char| ui.dispatch(&Event::Key(Key::Char(ch), Mods { ctrl: true, ..Mods::default() }));
+        ctrl(&mut ui, 't');
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("gone-a.txt") && c.to_text().contains("gone-b.txt"), "{}", c.to_text());
+        let row = |app: &App, n: &str| app.trash.as_ref().unwrap().iter().position(|i| i.original.ends_with(n)).unwrap();
+        ui.select_list("files", row(&app, "gone-b.txt"));
+        ctrl(&mut ui, 'r');
+        handle_all(&mut app, &mut ui);
+        assert!(d.join("gone-b.txt").exists() && !d.join("gone-a.txt").exists());
+        ui.select_list("files", row(&app, "gone-a.txt"));
+        ui.dispatch(&Event::Key(Key::Delete, Mods::default()));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("for good"), "{}", c.to_text());
+        key(&mut ui, Key::Left);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(!c.to_text().contains("gone-a.txt"), "{}", c.to_text());
+        assert!(!d.join("gone-a.txt").exists());
+        ctrl(&mut ui, 't');
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("gone-b.txt") && !c.to_text().contains("\t"), "{}", c.to_text());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
