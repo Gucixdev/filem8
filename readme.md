@@ -8,6 +8,11 @@ previews for images/audio/3D/game assets, keyboard first.
     FM8_FULL=1 ./run   # also audio playback, AVIF/WebP/progressive JPEG via extra crates
     ./run --get-icons  # asks, then downloads the Papirus icon theme (GPL-3) to ~/.local/share/icons
 
+The workspace builds only with [lazyUI-rs](https://github.com/Gucixdev/lazyUI-rs) cloned next to this folder
+(`crates/fm8-lz` uses it by path):
+
+    git clone https://github.com/Gucixdev/lazyUI-rs ../lazyUI-rs
+
 Knobs (env): `FM8_BACKEND=vulkan|gl|soft` (default: vulkan then GL, then automatic CPU surface), `FM8_SCALE=1.5`.
 Theme: `~/.config/filem8/theme` (colorado `.theme` format, reloaded live when the file changes; see docs/colorado-generator.md).
 Headless render of the real UI: `filem8 --screenshot out.png [DIR] [WxH] [SCALE]`.
