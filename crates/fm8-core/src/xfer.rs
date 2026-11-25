@@ -1,6 +1,6 @@
 //! Asynchronous copy/move: one worker thread per paste/drop with a byte
-//! counter the UI polls for the progress bar, and a cancel flag.
-use fm8_core::fileops::{self, Op};
+//! counter the UI polls for the progress bar, and a cancel flag. Used by both windows (filem8 and fm8-lz).
+use crate::fileops::{self, Op};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::mpsc::{channel, Receiver};

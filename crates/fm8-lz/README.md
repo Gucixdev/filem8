@@ -19,7 +19,8 @@ theme when that runs. fm8-ui stays until this has the same features.
 | delete | ask, then move the entry to the trash |
 | f2 | rename the entry (a name box) |
 | ctrl-n | new folder (a name box) |
-| ctrl-c, ctrl-x, ctrl-v | copy or cut the entry, paste it into the folder shown (on its own thread, a taken name gets a copy name) |
+| ctrl-c, ctrl-x, ctrl-v | copy or cut the entry, paste it into the folder shown (on its own thread, a taken name gets a copy name; a paste that takes longer shows a progress bar) |
+| esc | stop the running paste (a stopped copy leaves nothing behind; a stopped move keeps what already arrived and can be undone) |
 | ctrl-z | undo the last change (trash, rename, new folder, paste) |
 
 Thumbnails and theme icons are made on a worker thread (`src/thumbs.rs`): pictures are decoded with fm8-codec and shrunk to

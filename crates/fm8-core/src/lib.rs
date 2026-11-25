@@ -8,5 +8,6 @@ pub mod paths;
 pub mod places;
 pub mod settings;
 pub mod watch;
+pub mod xfer;
 pub mod thumbcache;
 pub mod trashbin;

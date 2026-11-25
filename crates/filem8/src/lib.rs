@@ -7,4 +7,4 @@ pub mod settings_ui;
 pub mod thumbs;
 pub mod trash_ui;
 pub mod views;
-pub mod xfer;
+pub use fm8_core::xfer;

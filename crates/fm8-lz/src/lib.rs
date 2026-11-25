@@ -10,6 +10,7 @@ use fm8_core::places::{self, Bookmark};
 use fm8_core::settings::{config_dir, Prefs};
 use lazyui::prelude::*;
 use fm8_core::fileops;
+use fm8_core::xfer::Transfer;
 use lazyui::media::Image;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -30,7 +31,6 @@ pub struct App {
     prompt: Option<Prompt>,
     /// what ctrl-c or ctrl-x took, and whether it is to be moved
     clip: Option<(Vec<PathBuf>, bool)>,
-    /// a copy or move running on its own thread
     /// the folder tabs: each remembers its folder and the row the cursor was on; `tab` is the one shown
     tabs: Vec<Tab>,
     tab: usize,
@@ -48,7 +48,30 @@ pub struct App {
     /// request number of the newest preview asked for, and what it was for
     pv_seq: u64,
     pv_path: Option<PathBuf>,
-    job: Option<std::sync::mpsc::Receiver<Result<(fileops::Op, String), String>>>,
+    /// the copy or move running on its own thread
+    job: Option<Paste>,
+}
+
+/// One running paste: the transfer, what it carries, and where it came from (a cut that fails goes back on the clipboard).
+struct Paste {
+    transfer: Transfer,
+    name: String,
+    from: Vec<PathBuf>,
+}
+
+impl Paste {
+    /// What the status line says when the transfer is over, and the change to remember for undo.
+    fn finish(self, done: Result<fileops::Op, String>) -> (Option<fileops::Op>, String) {
+        let (verb, stopped) = (if self.transfer.copy { "copied" } else { "moved" }, self.transfer.cancelled());
+        let past = if self.transfer.copy { "pasted" } else { "moved" };
+        match done {
+            // a stopped move keeps what had already arrived; one that got through before the stop is just moved
+            Ok(op) if stopped && !self.transfer.copy && self.from.iter().any(|p| p.exists()) => (Some(op), format!("stopped, part of {} was {verb} (ctrl-z takes it back)", self.name)),
+            Ok(op) => (Some(op), format!("{past} {}", self.name)),
+            Err(_) if stopped => (None, format!("stopped, nothing of {} was {verb}", self.name)),
+            Err(e) => (None, e),
+        }
+    }
 }
 
 enum Prompt {
@@ -62,7 +85,7 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  buttonbar id=tabs items=@tabnames active=tab size=@tabh:0\n  row\n    list id=places size=@sw:0\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=purge bind=purge title=\"Delete for good\" from=purgetext buttons=\"Delete,Cancel\" default=1\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  buttonbar id=tabs items=@tabnames active=tab size=@tabh:0\n  row\n    list id=places size=@sw:0\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  row size=@xh:0\n    text bind=xtext size=44\n    progressbar bind=xfrac max=1\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=purge bind=purge title=\"Delete for good\" from=purgetext buttons=\"Delete,Cancel\" default=1\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
 
 /// What a row of the places sidebar does.
 #[derive(Clone, Debug, PartialEq)]
@@ -431,6 +454,29 @@ impl App {
         self.trash = Some(items);
     }
 
+    /// Shows how far the running paste is, or takes its result. The bar appears only for a paste that outlives one poll.
+    fn poll_paste(&mut self, ui: &mut Ui) {
+        let Some(job) = &self.job else { return };
+        let Some(done) = job.transfer.poll() else {
+            let fraction = f64::from(job.transfer.fraction());
+            let verb = if job.transfer.copy { "copying" } else { "moving" };
+            ui.set_text("xtext", &format!("{verb} {}  {:.0}%  esc stops", job.name, fraction * 100.0));
+            ui.set("xfrac", fraction);
+            ui.set("xh", 1.0);
+            return;
+        };
+        let Some(job) = self.job.take() else { return };
+        ui.set("xh", 0.0);
+        let (cut, from) = (!job.transfer.copy, job.from.clone());
+        let (op, msg) = job.finish(done);
+        match op {
+            Some(op) => self.history.push(op),
+            None if cut && self.clip.is_none() => self.clip = Some((from, true)),
+            None => {}
+        }
+        self.refresh(ui, &msg);
+    }
+
     fn handle_event(&mut self, ui: &mut Ui, e: &UiEvent) {
         if e.id == "places" && (self.trash.is_some() || self.settings) {
             self.trash = None;
@@ -484,16 +530,7 @@ impl App {
                 }
             }
             ("app", "poll") => {
-                if let Some(done) = self.job.as_ref().and_then(|rx| rx.try_recv().ok()) {
-                    self.job = None;
-                    match done {
-                        Ok((op, msg)) => {
-                            self.history.push(op);
-                            self.refresh(ui, &msg);
-                        }
-                        Err(e) => self.refresh(ui, &e),
-                    }
-                }
+                self.poll_paste(ui);
                 for d in self.thumbs.finished().into_iter().filter(|d| d.gen == self.gen) {
                     if let Some(img) = Image::new(d.w, d.h, d.rgba) {
                         ui.set_image(&format!("t{}", d.index), img);
@@ -554,21 +591,23 @@ impl App {
             }
             ("app", "paste") => {
                 if self.job.is_some() {
-                    ui.set_text("status", "still busy with the last paste");
+                    ui.set_text("status", "still busy with the last paste (esc stops it)");
                 } else if let Some((from, cut)) = self.clip.clone() {
-                    let (dest, (tx, rx)) = (self.dir.clone(), std::sync::mpsc::channel());
                     let name = if from.len() == 1 { from[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{} items", from.len()) };
-                    let shown = name.clone();
-                    std::thread::spawn(move || {
-                        let done = if cut { fileops::move_to(&from, &dest) } else { fileops::copy_to(&from, &dest, &mut |_| true) };
-                        let _ = tx.send(done.map(|op| (op, format!("{} {name}", if cut { "moved" } else { "pasted" }))));
-                    });
+                    let transfer = Transfer::start(from.clone(), self.dir.clone(), !cut);
                     if cut {
                         self.clip = None;
                     }
                     ui.clear_list_marks("files");
-                    self.job = Some(rx);
-                    ui.set_text("status", &format!("pasting {shown}..."));
+                    ui.set_text("status", &format!("pasting {name}..."));
+                    self.job = Some(Paste { transfer, name, from });
+                }
+            }
+            // esc reaches this only when no widget had a use for it
+            ("ui", "key") if e.text == "esc" => {
+                if let Some(job) = &self.job {
+                    job.transfer.cancel();
+                    ui.set_text("status", &format!("stopping the paste of {}...", job.name));
                 }
             }
             ("props", "close") => {
@@ -986,6 +1025,49 @@ mod tests {
         handle_all(&mut app, &mut ui);
         wait(&mut app, &mut ui);
         assert!(d.join("docs/notes.txt").exists() && !d.join("notes.txt").exists(), "a move: only the new place");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_long_paste_shows_a_bar_and_esc_stops_it() {
+        let d = tree("stop");
+        let mut app = open_t(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        for (copy, word) in [(true, "copying"), (false, "moving")] {
+            let from = vec![d.join("notes.txt")];
+            // held: the worker waits, so the stop is asked for before a byte moves
+            app.job = Some(Paste { transfer: Transfer::start_held(from.clone(), d.join("docs"), copy), name: "notes.txt".into(), from: from.clone() });
+            app.handle(&mut ui, &UiEvent::of("app", "poll", ""));
+            assert_eq!(ui.number("xh"), 1.0);
+            ui.render(&mut c);
+            assert!(c.to_text().contains(&format!("{word} notes.txt  0%  esc stops")), "{}", c.to_text());
+            key(&mut ui, Key::Esc);
+            handle_all(&mut app, &mut ui);
+            let job = app.job.as_ref().expect("still running until the worker answers");
+            assert!(job.transfer.cancelled(), "esc on the list reaches the paste");
+            job.transfer.release();
+            for _ in 0..200 {
+                app.handle(&mut ui, &UiEvent::of("app", "poll", ""));
+                if app.job.is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.job.is_none() && ui.number("xh") == 0.0);
+            // a copy stops with nothing left behind; a move inside one disk is a rename and cannot be caught half way
+            if copy {
+                assert!(d.join("notes.txt").exists() && !d.join("docs/notes.txt").exists());
+                assert_eq!(app.clip, None);
+                assert_eq!(ui.text_of("status"), "stopped, nothing of notes.txt was copied");
+            } else {
+                assert!(!d.join("notes.txt").exists() && d.join("docs/notes.txt").exists());
+                assert_eq!(ui.text_of("status"), "moved notes.txt", "it got through, so it is not called partial");
+            }
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 
