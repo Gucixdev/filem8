@@ -8,4 +8,5 @@ description = "filem8 on lazyUI-rs: the file list, path bar and status line as a
 [dependencies]
 fm8-codec = { path = "../fm8-codec" }
 fm8-core = { path = "../fm8-core" }
+fm8-preview = { path = "../fm8-preview", default-features = false, features = ["svg"] }
 lazyui = { path = "../../../lazyUI-rs", default-features = false, features = ["gui"] }

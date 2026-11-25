@@ -6,6 +6,7 @@ theme when that runs. fm8-ui stays until this has the same features.
 | Key | Does |
 |---|---|
 | space, ctrl-a, ctrl-click | mark rows in the list (`*`); delete, ctrl-c and ctrl-x then act on all of them |
+| ctrl-p | preview pane: text, archive listing, picture, folder size, metadata of the entry under the cursor (loaded off the UI thread by `fm8-preview`) |
 | enter | open the folder, or go to the path typed in the bar |
 | alt-up | parent folder, cursor on the one just left |
 | ctrl-l | focus the path bar |

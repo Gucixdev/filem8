@@ -1,6 +1,7 @@
 //! filem8's folder view on lazyUI-rs: a path bar, the entries of one folder as a list, a status line. `App` holds the
 //! folder and what the list shows; `handle` turns the `Ui`'s events into navigation. The window loop is in `main.rs`.
 //! Keys: enter on a folder goes in, alt-up goes up, ctrl-l puts the cursor in the path bar, tab moves between the bar and the list.
+pub mod preview;
 pub mod thumbs;
 
 use fm8_core::class::Class;
@@ -28,6 +29,10 @@ pub struct App {
     /// what ctrl-c or ctrl-x took, and whether it is to be moved
     clip: Option<(Vec<PathBuf>, bool)>,
     /// a copy or move running on its own thread
+    previewer: preview::Previewer,
+    /// request number of the newest preview asked for, and what it was for
+    pv_seq: u64,
+    pv_path: Option<PathBuf>,
     job: Option<std::sync::mpsc::Receiver<Result<(fileops::Op, String), String>>>,
 }
 
@@ -42,7 +47,7 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files multi=1\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  row\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
 
 /// The `Ui` of the folder view, with its keys. ctrl-g switches between the list and the thumbnail grid.
 pub fn ui() -> Ui {
@@ -56,6 +61,7 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-c", "copy");
     ui.hotkey("ctrl-x", "cut");
     ui.hotkey("ctrl-v", "paste");
+    ui.hotkey("ctrl-p", "pane");
     ui.hotkey("f2", "rename");
     ui.hotkey("ctrl-n", "newdir");
     ui.every(0.2, "poll");
@@ -71,7 +77,7 @@ pub fn describe(e: &Entry) -> String {
 
 impl App {
     pub fn open(dir: &Path) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None };
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
         a.go(dir);
         a
     }
@@ -145,6 +151,50 @@ impl App {
     /// An event of the `Ui`: Enter in the path bar goes to that folder; Enter on a list row goes into the folder or
     /// ignores a file; alt-up goes up and puts the cursor on the folder just left.
     pub fn handle(&mut self, ui: &mut Ui, e: &UiEvent) {
+        self.handle_event(ui, e);
+        self.sync_preview(ui);
+    }
+
+    /// Keep the preview pane on the entry under the cursor: ask for it when it changed, show an answer when it arrives.
+    fn sync_preview(&mut self, ui: &mut Ui) {
+        if ui.number("pw") <= 0.0 {
+            self.pv_path = None;
+            return;
+        }
+        let at = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
+        let entry = at.and_then(|i| self.entries.get(i)).map(|e| (e.path.clone(), e.is_dir));
+        if entry.as_ref().map(|(p, _)| p) != self.pv_path.as_ref() {
+            self.pv_path = entry.as_ref().map(|(p, _)| p.clone());
+            self.pv_seq += 1;
+            match entry {
+                Some((p, false)) => self.previewer.ask(self.pv_seq, p),
+                Some((p, true)) => {
+                    let n = std::fs::read_dir(&p).map(|d| d.count()).unwrap_or(0);
+                    ui.set_list("pv", vec![format!("folder, {n} entries")]);
+                    ui.set("pvmode", 0.0);
+                }
+                None => ui.set_list("pv", Vec::new()),
+            }
+        }
+        if let Some((seq, shown)) = self.previewer.latest() {
+            if seq == self.pv_seq {
+                match shown {
+                    preview::Shown::Lines(l) => {
+                        ui.set_list("pv", l);
+                        ui.set("pvmode", 0.0);
+                    }
+                    preview::Shown::Picture { w, h, rgba } => {
+                        if let Some(img) = Image::new(w, h, rgba) {
+                            ui.set_image("pvimg", img);
+                            ui.set("pvmode", 1.0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_event(&mut self, ui: &mut Ui, e: &UiEvent) {
         match (e.id.as_str(), e.kind.as_str()) {
             ("bar", "activate") => {
                 let p = PathBuf::from(&e.text);
@@ -208,6 +258,7 @@ impl App {
                     Some(en) => {
                         ui.set_text("info", &describe(en));
                         ui.set("props", 1.0);
+                        ui.focus("props");
                     }
                     None => ui.set("props", 0.0),
                 }
@@ -261,6 +312,14 @@ impl App {
                     self.job = Some(rx);
                     ui.set_text("status", &format!("pasting {shown}..."));
                 }
+            }
+            ("props", "close") => {
+                ui.focus(if ui.number("mode") == 0.0 { "files" } else { "grid" });
+            }
+            ("app", "pane") => {
+                let open = ui.number("pw") > 0.0;
+                ui.set("pw", if open { 0.0 } else { 44.0 });
+                self.pv_path = None;
             }
             ("app", "rename") => {
                 let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
@@ -638,5 +697,53 @@ mod tests {
         handle_all(&mut app, &mut ui);
         assert!(d.join("b.txt").exists() && d.join("notes.txt").exists(), "one undo brings both back");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_preview_pane_follows_the_cursor_and_shows_text_then_a_folder() {
+        let d = tree("pane");
+        std::fs::write(d.join("notes.txt"), "hello preview\nsecond line\n").unwrap();
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(100, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Down);
+        assert!(!c.to_text().contains("hello preview"));
+        ui.dispatch(&Event::Key(Key::Char('p'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        let mut seen = false;
+        for _ in 0..200 {
+            app.handle(&mut ui, &UiEvent::of("app", "poll", ""));
+            ui.render(&mut c);
+            if c.to_text().contains("second line") {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(seen, "{}", c.to_text());
+        key(&mut ui, Key::Up);
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("folder, 0 entries") || c.to_text().contains("folder, 1 entries"), "{}", c.to_text());
+        assert!(!c.to_text().contains("second line"), "the old text is gone");
+        ui.dispatch(&Event::Key(Key::Char('p'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(!c.to_text().contains("folder, "), "ctrl-p again closes the pane");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn previews_become_lines_or_a_picture() {
+        use fm8_preview::{ArchiveEntry, Preview};
+        match preview::shown(Preview::Archive { kind: "zip".into(), entries: vec![ArchiveEntry { name: "a".into(), size: 1, is_dir: true }], truncated: false }) {
+            preview::Shown::Lines(l) => assert_eq!(l, vec!["zip archive, 1 entries", "a/"]),
+            _ => panic!("lines expected"),
+        }
+        assert!(matches!(preview::shown(Preview::Error("no".into())), preview::Shown::Lines(l) if l == ["no"]));
     }
 }

@@ -873,6 +873,7 @@ version = "0.1.0"
 dependencies = [
  "fm8-codec",
  "fm8-core",
+ "fm8-preview",
  "lazyui",
 ]
 

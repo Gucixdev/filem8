@@ -1,4 +1,4 @@
-//! `shot [DIR] OUT.png`: the folder view as the window draws it (list, thumbnail grid, properties window), without a compositor.
+//! `shot [DIR] OUT.png`: the folder view as the window draws it (list, thumbnail grid, properties window, preview pane), without a compositor.
 use fm8_lz::{ui, App};
 use lazyui::canvas::{Canvas, Caps};
 use lazyui::gui::{png, raster::{Pixels, Raster}};
@@ -37,4 +37,17 @@ fn main() {
     shot(&mut ui, &mut app, &format!("{out}-grid.png"));
     ui.dispatch(&Event::Key(Key::Char('i'), Mods { ctrl: true, ..Mods::default() }));
     shot(&mut ui, &mut app, &format!("{out}-props.png"));
+    ui.dispatch(&Event::Key(Key::Esc, Mods::default()));
+    ui.dispatch(&Event::Key(Key::Char('g'), Mods { ctrl: true, ..Mods::default() }));
+    ui.dispatch(&Event::Key(Key::Char('p'), Mods { ctrl: true, ..Mods::default() }));
+    shot(&mut ui, &mut app, &format!("{out}-pane-open.png"));
+    ui.focus("files");
+    for _ in 0..4 {
+        ui.dispatch(&Event::Key(Key::Down, Mods::default()));
+    }
+    shot(&mut ui, &mut app, &format!("{out}-pane-text.png"));
+    for _ in 0..2 {
+        ui.dispatch(&Event::Key(Key::Down, Mods::default()));
+    }
+    shot(&mut ui, &mut app, &format!("{out}-pane-picture.png"));
 }
