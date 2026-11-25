@@ -65,13 +65,23 @@ pub fn icon_names(class: Class, dir: bool) -> Vec<String> {
 
 /// `auto` only offers themes the index lists as visible; Adwaita and its legacy PNG set are often hidden yet complete.
 pub fn pick_theme(themes: &mut IconThemes) -> Option<String> {
-    themes.auto(false, true).or_else(|| ["AdwaitaLegacy", "Adwaita"].into_iter().find(|t| themes.usable(t, false)).map(String::from))
+    themes.auto(true, true).or_else(|| ["AdwaitaLegacy", "Adwaita"].into_iter().find(|t| themes.usable(t, true)).map(String::from))
 }
 
 fn icon(themes: &mut IconThemes, theme: &Option<String>, class: Class, dir: bool) -> Option<(usize, usize, Vec<u8>)> {
     let theme = theme.as_deref()?;
-    let path = themes.find_any(theme, &icon_names(class, dir), 64, 1, false)?;
-    let bytes = std::fs::read(&path).ok()?;
+    let path = themes.find_any(theme, &icon_names(class, dir), 64, 1, true)?;
+    icon_file(&path)
+}
+
+/// One icon file as RGBA fitted to the thumbnail size: a PNG is decoded, an SVG is drawn at that size.
+pub fn icon_file(path: &std::path::Path) -> Option<(usize, usize, Vec<u8>)> {
+    let bytes = std::fs::read(path).ok()?;
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz")) {
+        let img = fm8_preview::image_load::render_svg(&bytes, SIDE).ok()?;
+        let f = img.frames.into_iter().next()?;
+        return Some((f.w as usize, f.h as usize, f.rgba));
+    }
     let (_, img) = decode(&bytes, "png").ok()?;
     let (w, h) = resize::fit(img.w, img.h, SIDE);
     let small = if (w, h) == (img.w, img.h) { img } else { resize::resize(&img, w, h, false) };
@@ -109,5 +119,32 @@ impl Thumbs {
 
     pub fn finished(&self) -> Vec<Done> {
         self.rx.try_iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" fill="#ff0000"/></svg>"##;
+
+    #[test]
+    fn an_svg_only_theme_gives_icons() {
+        let root = std::env::temp_dir().join(format!("fm8lz-svgtheme-{}", std::process::id()));
+        let theme = root.join("svgonly");
+        for d in ["places", "mimetypes"] {
+            std::fs::create_dir_all(theme.join("scalable").join(d)).unwrap();
+        }
+        std::fs::write(theme.join("index.theme"), "[Icon Theme]\nName=svgonly\nDirectories=scalable/places,scalable/mimetypes\n\n[scalable/places]\nSize=64\nType=Scalable\nMinSize=16\nMaxSize=512\nContext=Places\n\n[scalable/mimetypes]\nSize=64\nType=Scalable\nMinSize=16\nMaxSize=512\nContext=MimeTypes\n").unwrap();
+        std::fs::write(theme.join("scalable/places/folder.svg"), SVG).unwrap();
+        std::fs::write(theme.join("scalable/mimetypes/text-x-generic.svg"), SVG).unwrap();
+        let mut themes = IconThemes::new(vec![root.clone()]);
+        let picked = pick_theme(&mut themes);
+        assert_eq!(picked.as_deref(), Some("svgonly"));
+        let (w, h, rgba) = icon(&mut themes, &picked, Class::Text, false).expect("the generic icon is drawn");
+        assert_eq!((w, h, rgba.len()), (SIDE as usize, SIDE as usize, (SIDE * SIDE * 4) as usize));
+        assert_eq!(&rgba[..4], &[255, 0, 0, 255]);
+        assert!(icon(&mut themes, &picked, Class::Text, true).is_some());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
