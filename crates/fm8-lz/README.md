@@ -13,7 +13,8 @@ theme when that runs. fm8-ui stays until this has the same features.
 | delete | ask, then move the entry to the trash |
 | f2 | rename the entry (a name box) |
 | ctrl-n | new folder (a name box) |
-| ctrl-z | undo the last change (trash, rename, new folder) |
+| ctrl-c, ctrl-x, ctrl-v | copy or cut the entry, paste it into the folder shown (on its own thread, a taken name gets a copy name) |
+| ctrl-z | undo the last change (trash, rename, new folder, paste) |
 
 Thumbnails and theme icons are made on a worker thread (`src/thumbs.rs`): pictures are decoded with fm8-codec and shrunk to
 128 px, other entries get an icon from the first usable PNG icon theme (AdwaitaLegacy and Adwaita are tried by name when the

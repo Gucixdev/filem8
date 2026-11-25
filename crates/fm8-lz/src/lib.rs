@@ -25,6 +25,10 @@ pub struct App {
     pending: Option<PathBuf>,
     /// what the open name prompt is for
     prompt: Option<Prompt>,
+    /// what ctrl-c or ctrl-x took, and whether it is to be moved
+    clip: Option<(PathBuf, bool)>,
+    /// a copy or move running on its own thread
+    job: Option<std::sync::mpsc::Receiver<Result<(fileops::Op, String), String>>>,
 }
 
 enum Prompt {
@@ -49,6 +53,9 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-i", "info");
     ui.hotkey("delete", "trash");
     ui.hotkey("ctrl-z", "undo");
+    ui.hotkey("ctrl-c", "copy");
+    ui.hotkey("ctrl-x", "cut");
+    ui.hotkey("ctrl-v", "paste");
     ui.hotkey("f2", "rename");
     ui.hotkey("ctrl-n", "newdir");
     ui.every(0.2, "poll");
@@ -64,7 +71,7 @@ pub fn describe(e: &Entry) -> String {
 
 impl App {
     pub fn open(dir: &Path) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None };
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None };
         a.go(dir);
         a
     }
@@ -154,6 +161,16 @@ impl App {
                 }
             }
             ("app", "poll") => {
+                if let Some(done) = self.job.as_ref().and_then(|rx| rx.try_recv().ok()) {
+                    self.job = None;
+                    match done {
+                        Ok((op, msg)) => {
+                            self.history.push(op);
+                            self.refresh(ui, &msg);
+                        }
+                        Err(e) => self.refresh(ui, &e),
+                    }
+                }
                 for d in self.thumbs.finished().into_iter().filter(|d| d.gen == self.gen) {
                     if let Some(img) = Image::new(d.w, d.h, d.rgba) {
                         ui.set_image(&format!("t{}", d.index), img);
@@ -199,6 +216,32 @@ impl App {
                 }
             }
             ("ask", _) => self.pending = None,
+            ("app", "copy" | "cut") => {
+                let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
+                if let Some(en) = i.and_then(|i| self.entries.get(i)) {
+                    let cut = e.kind == "cut";
+                    self.clip = Some((en.path.clone(), cut));
+                    ui.set_text("status", &format!("{} {} (ctrl-v pastes)", if cut { "cut" } else { "copied" }, en.name));
+                }
+            }
+            ("app", "paste") => {
+                if self.job.is_some() {
+                    ui.set_text("status", "still busy with the last paste");
+                } else if let Some((from, cut)) = self.clip.clone() {
+                    let (dest, (tx, rx)) = (self.dir.clone(), std::sync::mpsc::channel());
+                    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let shown = name.clone();
+                    std::thread::spawn(move || {
+                        let done = if cut { fileops::move_to(std::slice::from_ref(&from), &dest) } else { fileops::copy_to(std::slice::from_ref(&from), &dest, &mut |_| true) };
+                        let _ = tx.send(done.map(|op| (op, format!("{} {name}", if cut { "moved" } else { "pasted" }))));
+                    });
+                    if cut {
+                        self.clip = None;
+                    }
+                    self.job = Some(rx);
+                    ui.set_text("status", &format!("pasting {shown}..."));
+                }
+            }
             ("app", "rename") => {
                 let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
                 if let Some(en) = i.and_then(|i| self.entries.get(i)) {
@@ -486,6 +529,62 @@ mod tests {
         ui.dispatch(&Event::Key(Key::Char('z'), Mods { ctrl: true, ..Mods::default() }));
         handle_all(&mut app, &mut ui);
         assert!(!d.join("New folder").exists(), "undo takes the new folder away again");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn copy_and_cut_paste_run_off_the_ui_thread_and_ctrl_z_takes_them_back() {
+        let d = tree("paste");
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        let ctrl = |ui: &mut Ui, ch: char| ui.dispatch(&Event::Key(Key::Char(ch), Mods { ctrl: true, ..Mods::default() }));
+        let wait = |app: &mut App, ui: &mut Ui| {
+            for _ in 0..200 {
+                app.handle(ui, &UiEvent::of("app", "poll", ""));
+                if app.job.is_none() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("the paste never finished");
+        };
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Down);
+        assert_eq!(app.entries[2].name, "notes.txt");
+        ctrl(&mut ui, 'c');
+        handle_all(&mut app, &mut ui);
+        key(&mut ui, Key::Up);
+        key(&mut ui, Key::Up);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert!(app.dir.ends_with("docs"));
+        ctrl(&mut ui, 'v');
+        handle_all(&mut app, &mut ui);
+        wait(&mut app, &mut ui);
+        assert!(d.join("docs/notes.txt").exists() && d.join("notes.txt").exists(), "a copy: both exist");
+        assert!(app.entries.iter().any(|e| e.name == "notes.txt"), "the view shows it");
+        ctrl(&mut ui, 'z');
+        handle_all(&mut app, &mut ui);
+        assert!(!d.join("docs/notes.txt").exists(), "undo removes the copy");
+        app.go(&d);
+        app.show(&mut ui);
+        ui.render(&mut c);
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Down);
+        ctrl(&mut ui, 'x');
+        handle_all(&mut app, &mut ui);
+        key(&mut ui, Key::Up);
+        key(&mut ui, Key::Up);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        ctrl(&mut ui, 'v');
+        handle_all(&mut app, &mut ui);
+        wait(&mut app, &mut ui);
+        assert!(d.join("docs/notes.txt").exists() && !d.join("notes.txt").exists(), "a move: only the new place");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
