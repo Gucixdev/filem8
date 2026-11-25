@@ -63,6 +63,11 @@ pub fn icon_names(class: Class, dir: bool) -> Vec<String> {
     n.iter().map(|s| s.to_string()).collect()
 }
 
+/// `auto` only offers themes the index lists as visible; Adwaita and its legacy PNG set are often hidden yet complete.
+pub fn pick_theme(themes: &mut IconThemes) -> Option<String> {
+    themes.auto(false, true).or_else(|| ["AdwaitaLegacy", "Adwaita"].into_iter().find(|t| themes.usable(t, false)).map(String::from))
+}
+
 fn icon(themes: &mut IconThemes, theme: &Option<String>, class: Class, dir: bool) -> Option<(usize, usize, Vec<u8>)> {
     let theme = theme.as_deref()?;
     let path = themes.find_any(theme, &icon_names(class, dir), 64, 1, false)?;
@@ -79,7 +84,7 @@ impl Default for Thumbs {
         let (out, rx) = channel();
         std::thread::spawn(move || {
             let mut themes = IconThemes::system();
-            let theme = themes.auto(false, true);
+            let theme = pick_theme(&mut themes);
             let mut cache: HashMap<(Class, bool), Option<(usize, usize, Vec<u8>)>> = HashMap::new();
             for (gen, index, job) in jobs {
                 let got = match job {

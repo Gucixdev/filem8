@@ -291,7 +291,8 @@ mod tests {
     #[test]
     fn folders_get_an_icon_from_the_icon_theme_when_one_is_installed() {
         let mut themes = fm8_core::icontheme::IconThemes::system();
-        if themes.auto(false, true).is_none() {
+        if crate::thumbs::pick_theme(&mut themes).is_none() {
+            eprintln!("no icon theme here: skipped");
             return;
         }
         let d = tree("icons");
