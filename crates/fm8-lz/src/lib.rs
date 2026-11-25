@@ -6,6 +6,7 @@ pub mod thumbs;
 use fm8_core::class::Class;
 use fm8_core::listing::{compare, human_size, list_blocking, Entry, Sort};
 use lazyui::prelude::*;
+use fm8_core::fileops;
 use lazyui::media::Image;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,9 @@ pub struct App {
     gen: u64,
     asked: HashSet<usize>,
     shown: usize,
+    history: fileops::History,
+    /// what the open trash question is about
+    pending: Option<PathBuf>,
 }
 
 /// The one line a row shows: a folder mark, the name, the size.
@@ -27,7 +31,7 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n";
 
 /// The `Ui` of the folder view, with its keys. ctrl-g switches between the list and the thumbnail grid.
 pub fn ui() -> Ui {
@@ -36,6 +40,8 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-l", "bar");
     ui.hotkey("ctrl-g", "grid");
     ui.hotkey("ctrl-i", "info");
+    ui.hotkey("delete", "trash");
+    ui.hotkey("ctrl-z", "undo");
     ui.every(0.2, "poll");
     ui
 }
@@ -49,7 +55,7 @@ pub fn describe(e: &Entry) -> String {
 
 impl App {
     pub fn open(dir: &Path) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0 };
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None };
         a.go(dir);
         a
     }
@@ -88,6 +94,16 @@ impl App {
         }
         self.shown = self.entries.len();
         ui.set("count", self.entries.len() as f64);
+    }
+
+    /// Read the folder again after a change, keep the cursor near where it was and say what happened.
+    fn refresh(&mut self, ui: &mut Ui, msg: &str) {
+        let at = ui.list_selected("files").unwrap_or(0);
+        let dir = self.dir.clone();
+        self.go(&dir);
+        self.show(ui);
+        ui.select_list("files", at.min(self.entries.len().saturating_sub(1)));
+        ui.set_text("status", msg);
     }
 
     /// An event of the `Ui`: Enter in the path bar goes to that folder; Enter on a list row goes into the folder or
@@ -152,6 +168,33 @@ impl App {
             }
             ("app", "bar") => {
                 ui.focus("bar");
+            }
+            ("app", "trash") => {
+                let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
+                if let Some(en) = i.and_then(|i| self.entries.get(i)) {
+                    ui.set_text("asktext", &format!("Move {} to the trash?", en.name));
+                    self.pending = Some(en.path.clone());
+                    ui.set("ask", 1.0);
+                }
+            }
+            ("ask", "activate") if e.index == 0 => {
+                if let Some(path) = self.pending.take() {
+                    let msg = match fileops::trash(std::slice::from_ref(&path)) {
+                        Ok(op) => {
+                            self.history.push(op);
+                            format!("{} moved to the trash (ctrl-z undoes)", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+                        }
+                        Err(e) => format!("trash failed: {e}"),
+                    };
+                    self.refresh(ui, &msg);
+                }
+            }
+            ("ask", _) => self.pending = None,
+            ("app", "undo") => {
+                let msg = match self.history.undo() {
+                    Ok(s) | Err(s) => s,
+                };
+                self.refresh(ui, &msg);
             }
             ("app", "up") => {
                 if let Some(parent) = self.dir.parent().map(Path::to_path_buf) {
@@ -310,6 +353,44 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert!(got, "no icon for {:?}", app.entries[0].name);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn delete_asks_then_moves_to_the_trash_and_ctrl_z_brings_it_back() {
+        let d = tree("trash");
+        // the trash of this test lives inside the test tree, so nothing of the real one is touched
+        unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Down);
+        assert_eq!(app.entries[2].name, "notes.txt");
+        key(&mut ui, Key::Delete);
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("Move notes.txt to the trash?"), "{}", c.to_text());
+        assert!(d.join("notes.txt").exists(), "nothing happens before the answer");
+        key(&mut ui, Key::Esc);
+        handle_all(&mut app, &mut ui);
+        assert!(d.join("notes.txt").exists(), "cancel leaves it");
+        key(&mut ui, Key::Delete);
+        handle_all(&mut app, &mut ui);
+        key(&mut ui, Key::Left);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert!(!d.join("notes.txt").exists());
+        assert!(app.entries.iter().all(|e| e.name != "notes.txt"));
+        ui.render(&mut c);
+        assert!(c.to_text().contains("moved to the trash"), "{}", c.to_text());
+        ui.dispatch(&Event::Key(Key::Char('z'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        assert!(d.join("notes.txt").exists(), "undo restores it");
+        assert!(app.entries.iter().any(|e| e.name == "notes.txt"));
         let _ = std::fs::remove_dir_all(&d);
     }
 }

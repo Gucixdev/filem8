@@ -1,0 +1,21 @@
+# fm8-lz
+
+filem8's folder view on lazyUI-rs, in a native Wayland window: `cargo run -p fm8-lz -- [DIR]`. It follows finedesktop's
+theme when that runs. fm8-ui stays until this has the same features.
+
+| Key | Does |
+|---|---|
+| enter | open the folder, or go to the path typed in the bar |
+| alt-up | parent folder, cursor on the one just left |
+| ctrl-l | focus the path bar |
+| ctrl-g | switch between the list and the thumbnail grid |
+| ctrl-i | properties window (floats, drag the title, esc closes) |
+| delete | ask, then move the entry to the trash |
+| ctrl-z | undo the last change (trash) |
+
+Thumbnails and theme icons are made on a worker thread (`src/thumbs.rs`): pictures are decoded with fm8-codec and shrunk to
+128 px, other entries get an icon from the first usable PNG icon theme (AdwaitaLegacy and Adwaita are tried by name when the
+index hides them). SVG-only themes are not read yet.
+
+`cargo run -p fm8-lz --example shot -- DIR OUT` writes `OUT-list.png`, `OUT-grid.png` and `OUT-props.png` without a
+compositor, drawn by the same rasteriser as the window. Tests: `cargo test -p fm8-lz`.
