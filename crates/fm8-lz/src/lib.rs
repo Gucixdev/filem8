@@ -22,11 +22,11 @@ pub struct App {
     shown: usize,
     history: fileops::History,
     /// what the open trash question is about
-    pending: Option<PathBuf>,
+    pending: Option<Vec<PathBuf>>,
     /// what the open name prompt is for
     prompt: Option<Prompt>,
     /// what ctrl-c or ctrl-x took, and whether it is to be moved
-    clip: Option<(PathBuf, bool)>,
+    clip: Option<(Vec<PathBuf>, bool)>,
     /// a copy or move running on its own thread
     job: Option<std::sync::mpsc::Receiver<Result<(fileops::Op, String), String>>>,
 }
@@ -42,7 +42,7 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files multi=1\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
 
 /// The `Ui` of the folder view, with its keys. ctrl-g switches between the list and the thumbnail grid.
 pub fn ui() -> Ui {
@@ -110,6 +110,26 @@ impl App {
         }
         self.shown = self.entries.len();
         ui.set("count", self.entries.len() as f64);
+    }
+
+    /// What a command acts on: the marked rows of the list, else the entry under the cursor; with a name to show for it.
+    fn targets(&self, ui: &Ui) -> Option<(Vec<PathBuf>, String)> {
+        let grid = ui.number("mode") != 0.0;
+        let marks = if grid { Vec::new() } else { ui.list_marks("files") };
+        let idx: Vec<usize> = if !marks.is_empty() {
+            marks
+        } else if grid {
+            vec![ui.number("cur") as usize]
+        } else {
+            ui.list_selected("files").into_iter().collect()
+        };
+        let list: Vec<&Entry> = idx.iter().filter_map(|&i| self.entries.get(i)).collect();
+        let name = match list.as_slice() {
+            [] => return None,
+            [one] => one.name.clone(),
+            many => format!("{} items", many.len()),
+        };
+        Some((list.iter().map(|e| e.path.clone()).collect(), name))
     }
 
     /// Read the folder again after a change, keep the cursor near where it was and say what happened.
@@ -196,32 +216,31 @@ impl App {
                 ui.focus("bar");
             }
             ("app", "trash") => {
-                let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
-                if let Some(en) = i.and_then(|i| self.entries.get(i)) {
-                    ui.set_text("asktext", &format!("Move {} to the trash?", en.name));
-                    self.pending = Some(en.path.clone());
+                if let Some((paths, name)) = self.targets(ui) {
+                    ui.set_text("asktext", &format!("Move {name} to the trash?"));
+                    self.pending = Some(paths);
                     ui.set("ask", 1.0);
                 }
             }
             ("ask", "activate") if e.index == 0 => {
-                if let Some(path) = self.pending.take() {
-                    let msg = match fileops::trash(std::slice::from_ref(&path)) {
+                if let Some(paths) = self.pending.take() {
+                    let msg = match fileops::trash(&paths) {
                         Ok(op) => {
                             self.history.push(op);
-                            format!("{} moved to the trash (ctrl-z undoes)", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+                            format!("{} moved to the trash (ctrl-z undoes)", if paths.len() == 1 { paths[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{} items", paths.len()) })
                         }
                         Err(e) => format!("trash failed: {e}"),
                     };
+                    ui.clear_list_marks("files");
                     self.refresh(ui, &msg);
                 }
             }
             ("ask", _) => self.pending = None,
             ("app", "copy" | "cut") => {
-                let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
-                if let Some(en) = i.and_then(|i| self.entries.get(i)) {
+                if let Some((paths, name)) = self.targets(ui) {
                     let cut = e.kind == "cut";
-                    self.clip = Some((en.path.clone(), cut));
-                    ui.set_text("status", &format!("{} {} (ctrl-v pastes)", if cut { "cut" } else { "copied" }, en.name));
+                    self.clip = Some((paths, cut));
+                    ui.set_text("status", &format!("{} {name} (ctrl-v pastes)", if cut { "cut" } else { "copied" }));
                 }
             }
             ("app", "paste") => {
@@ -229,15 +248,16 @@ impl App {
                     ui.set_text("status", "still busy with the last paste");
                 } else if let Some((from, cut)) = self.clip.clone() {
                     let (dest, (tx, rx)) = (self.dir.clone(), std::sync::mpsc::channel());
-                    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let name = if from.len() == 1 { from[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{} items", from.len()) };
                     let shown = name.clone();
                     std::thread::spawn(move || {
-                        let done = if cut { fileops::move_to(std::slice::from_ref(&from), &dest) } else { fileops::copy_to(std::slice::from_ref(&from), &dest, &mut |_| true) };
+                        let done = if cut { fileops::move_to(&from, &dest) } else { fileops::copy_to(&from, &dest, &mut |_| true) };
                         let _ = tx.send(done.map(|op| (op, format!("{} {name}", if cut { "moved" } else { "pasted" }))));
                     });
                     if cut {
                         self.clip = None;
                     }
+                    ui.clear_list_marks("files");
                     self.job = Some(rx);
                     ui.set_text("status", &format!("pasting {shown}..."));
                 }
@@ -585,6 +605,38 @@ mod tests {
         handle_all(&mut app, &mut ui);
         wait(&mut app, &mut ui);
         assert!(d.join("docs/notes.txt").exists() && !d.join("notes.txt").exists(), "a move: only the new place");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn marked_rows_are_trashed_and_pasted_together() {
+        let d = tree("marks");
+        std::fs::write(d.join("b.txt"), "b").unwrap();
+        unsafe { std::env::set_var("XDG_DATA_HOME", d.join(".data")) };
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(80, 12, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Down);
+        assert_eq!(app.entries[2].name, "b.txt");
+        key(&mut ui, Key::Char(' '));
+        key(&mut ui, Key::Char(' '));
+        assert_eq!(ui.list_marks("files"), vec![2, 3]);
+        ui.dispatch(&Event::Key(Key::Delete, Mods::default()));
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert!(c.to_text().contains("Move 2 items to the trash?"), "{}", c.to_text());
+        key(&mut ui, Key::Left);
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        assert!(!d.join("b.txt").exists() && !d.join("notes.txt").exists());
+        assert!(ui.list_marks("files").is_empty());
+        ui.dispatch(&Event::Key(Key::Char('z'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        assert!(d.join("b.txt").exists() && d.join("notes.txt").exists(), "one undo brings both back");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
