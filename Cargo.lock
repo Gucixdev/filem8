@@ -871,6 +871,7 @@ dependencies = [
 name = "fm8-lz"
 version = "0.1.0"
 dependencies = [
+ "fm8-codec",
  "fm8-core",
  "lazyui",
 ]
