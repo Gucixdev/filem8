@@ -114,8 +114,10 @@ impl App {
             ("grid", "need") => {
                 let first = e.index.max(0) as usize;
                 for i in first..(first + e.number as usize).min(self.entries.len()) {
-                    if self.entries[i].class == Class::Image && self.asked.insert(i) {
-                        self.thumbs.ask(self.gen, i, self.entries[i].path.clone());
+                    if self.asked.insert(i) {
+                        let en = &self.entries[i];
+                        let job = if en.class == Class::Image { thumbs::Job::Thumb(en.path.clone()) } else { thumbs::Job::Icon(en.class, en.is_dir) };
+                        self.thumbs.ask(self.gen, i, job);
                     }
                 }
             }
@@ -283,6 +285,30 @@ mod tests {
         assert!(ui.text_of("info").starts_with("notes.txt\nkind: text\nsize: 5 B"), "{}", ui.text_of("info"));
         ui.render(&mut c);
         assert!(c.to_text().contains("Properties"), "{}", c.to_text());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn folders_get_an_icon_from_the_icon_theme_when_one_is_installed() {
+        let mut themes = fm8_core::icontheme::IconThemes::system();
+        if themes.auto(false, true).is_none() {
+            return;
+        }
+        let d = tree("icons");
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        app.handle(&mut ui, &UiEvent { id: "grid".into(), kind: "need".into(), text: String::new(), index: 0, number: 1.0 });
+        let mut got = false;
+        for _ in 0..200 {
+            app.handle(&mut ui, &UiEvent::of("app", "poll", ""));
+            if ui.has_image("t0") {
+                got = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(got, "no icon for {:?}", app.entries[0].name);
         let _ = std::fs::remove_dir_all(&d);
     }
 }
