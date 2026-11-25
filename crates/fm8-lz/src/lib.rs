@@ -30,6 +30,9 @@ pub struct App {
     /// what ctrl-c or ctrl-x took, and whether it is to be moved
     clip: Option<(Vec<PathBuf>, bool)>,
     /// a copy or move running on its own thread
+    /// the folder tabs: each remembers its folder and the row the cursor was on; `tab` is the one shown
+    tabs: Vec<Tab>,
+    tab: usize,
     /// the trash view: while it is Some the list shows these items and the folder commands are off
     trash: Option<Vec<fm8_core::trashbin::TrashItem>>,
     /// the settings view: the list shows the preferences and Enter changes the one under the cursor
@@ -54,7 +57,13 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  row\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=purge bind=purge title=\"Delete for good\" from=purgetext buttons=\"Delete,Cancel\" default=1\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  buttonbar id=tabs items=@tabnames active=tab size=@tabh:0\n  row\n    pages bind=mode\n      list id=files multi=1\n      grid id=grid count=@count tile=16x8 prefix=t bind=cur\n    col size=@pw:0\n      pages bind=pvmode\n        list id=pv\n        image bind=pvimg\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n  dialog id=purge bind=purge title=\"Delete for good\" from=purgetext buttons=\"Delete,Cancel\" default=1\n  dialog id=ask bind=ask title=\"Move to trash\" from=asktext buttons=\"Trash,Cancel\" default=1\n  dialog id=prompt bind=prompt title=Name from=ptext field=pname buttons=\"OK,Cancel\"\n";
+
+/// One folder tab.
+struct Tab {
+    dir: PathBuf,
+    at: usize,
+}
 
 /// The `Ui` of the folder view, with its keys. ctrl-g switches between the list and the thumbnail grid.
 pub fn ui() -> Ui {
@@ -69,7 +78,11 @@ pub fn ui() -> Ui {
     ui.hotkey("ctrl-x", "cut");
     ui.hotkey("ctrl-v", "paste");
     ui.hotkey("ctrl-p", "pane");
-    ui.hotkey("ctrl-t", "bin");
+    ui.hotkey("alt-t", "bin");
+    ui.hotkey("ctrl-t", "newtab");
+    ui.hotkey("ctrl-w", "closetab");
+    ui.hotkey("ctrl-tab", "nexttab");
+    ui.hotkey("ctrl-shift-tab", "prevtab");
     ui.hotkey("ctrl-,", "settings");
     ui.hotkey("ctrl-r", "restore");
     ui.hotkey("f2", "rename");
@@ -107,8 +120,9 @@ impl App {
 
     /// Like `open`, with the preferences kept in `prefs_file` (the file `filem8` itself uses by default).
     pub fn open_with(dir: &Path, prefs_file: PathBuf) -> App {
-        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, trash: None, settings: false, prefs: Prefs::load(&prefs_file), prefs_file, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
+        let mut a = App { dir: PathBuf::new(), entries: Vec::new(), error: None, thumbs: thumbs::Thumbs::default(), gen: 0, asked: HashSet::new(), shown: 0, history: fileops::History::default(), pending: None, prompt: None, clip: None, job: None, tabs: Vec::new(), tab: 0, trash: None, settings: false, prefs: Prefs::load(&prefs_file), prefs_file, previewer: preview::Previewer::default(), pv_seq: 0, pv_path: None };
         a.go(dir);
+        a.tabs = vec![Tab { dir: a.dir.clone(), at: 0 }];
         a
     }
 
@@ -162,6 +176,35 @@ impl App {
         }
         self.shown = self.entries.len();
         ui.set("count", self.entries.len() as f64);
+        self.show_tabs(ui);
+    }
+
+    /// The tab bar: hidden with one tab, else one label per folder (the folder's own name).
+    fn show_tabs(&mut self, ui: &mut Ui) {
+        if let Some(t) = self.tabs.get_mut(self.tab) {
+            t.dir = self.dir.clone();
+        }
+        let names: Vec<String> = self.tabs.iter().map(|t| t.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())).collect();
+        ui.set_text("tabnames", &names.join("\n"));
+        ui.set("tabh", if names.len() > 1 { 1.0 } else { 0.0 });
+        ui.set("tab", self.tab as f64);
+    }
+
+    fn cursor(&self, ui: &Ui) -> usize {
+        if ui.number("mode") == 0.0 { ui.list_selected("files").unwrap_or(0) } else { ui.number("cur") as usize }
+    }
+
+    /// Show tab `n`: read its folder again and put the cursor back where it was.
+    fn switch_tab(&mut self, ui: &mut Ui, n: usize) {
+        if n >= self.tabs.len() {
+            return;
+        }
+        self.tabs[self.tab].at = self.cursor(ui);
+        self.tab = n;
+        let (dir, at) = (self.tabs[n].dir.clone(), self.tabs[n].at);
+        self.go(&dir);
+        self.show(ui);
+        ui.select_list("files", at.min(self.entries.len().saturating_sub(1)));
     }
 
     /// What a command acts on: the marked rows of the list, else the entry under the cursor; with a name to show for it.
@@ -243,7 +286,7 @@ impl App {
         }
     }
 
-    /// The trash view, entered and left with ctrl-t: rows are `name<TAB>deleted`, ctrl-r restores the marked rows (or the
+    /// The trash view, entered and left with alt-t: rows are `name<TAB>deleted`, ctrl-r restores the marked rows (or the
     /// cursor row) to where they came from, delete removes them for good after a question.
     fn handle_trash(&mut self, ui: &mut Ui, e: &UiEvent) {
         match (e.id.as_str(), e.kind.as_str()) {
@@ -350,7 +393,7 @@ impl App {
         ui.select_list("files", at.min(items.len().saturating_sub(1)));
         ui.set("mode", 0.0);
         ui.set_text("path", "trash");
-        ui.set_text("status", &format!("{msg}; {} items in the trash (ctrl-r restores, delete removes, ctrl-t leaves)", items.len()));
+        ui.set_text("status", &format!("{msg}; {} items in the trash (ctrl-r restores, delete removes, alt-t leaves)", items.len()));
         self.trash = Some(items);
     }
 
@@ -541,6 +584,29 @@ impl App {
                     Ok(s) | Err(s) => s,
                 };
                 self.refresh(ui, &msg);
+            }
+            ("app", "newtab") => {
+                let at = self.cursor(ui);
+                self.tabs[self.tab].at = at;
+                self.tabs.insert(self.tab + 1, Tab { dir: self.dir.clone(), at });
+                self.tab += 1;
+                self.show_tabs(ui);
+            }
+            ("app", "closetab") if self.tabs.len() > 1 => {
+                self.tabs.remove(self.tab);
+                let n = self.tab.min(self.tabs.len() - 1);
+                self.tab = n;
+                let (dir, at) = (self.tabs[n].dir.clone(), self.tabs[n].at);
+                self.go(&dir);
+                self.show(ui);
+                ui.select_list("files", at.min(self.entries.len().saturating_sub(1)));
+            }
+            ("app", "nexttab") => self.switch_tab(ui, (self.tab + 1) % self.tabs.len()),
+            ("app", "prevtab") => self.switch_tab(ui, (self.tab + self.tabs.len() - 1) % self.tabs.len()),
+            ("tabs", "activate" | "change") => {
+                if let Ok(n) = usize::try_from(e.index) {
+                    self.switch_tab(ui, n);
+                }
             }
             ("app", "up") => {
                 if let Some(parent) = self.dir.parent().map(Path::to_path_buf) {
@@ -960,7 +1026,7 @@ mod tests {
             handle_all(&mut app, &mut ui);
         }
         assert!(!d.join("gone-a.txt").exists() && !d.join("gone-b.txt").exists());
-        let ctrl = |ui: &mut Ui, ch: char| ui.dispatch(&Event::Key(Key::Char(ch), Mods { ctrl: true, ..Mods::default() }));
+        let ctrl = |ui: &mut Ui, ch: char| ui.dispatch(&Event::Key(Key::Char(ch), Mods { ctrl: ch != 't', alt: ch == 't', ..Mods::default() }));
         ctrl(&mut ui, 't');
         handle_all(&mut app, &mut ui);
         ui.render(&mut c);
@@ -1037,6 +1103,47 @@ mod tests {
         ui.dispatch(&Event::Key(Key::Delete, Mods::default()));
         handle_all(&mut app, &mut ui);
         assert!(!d.join("notes.txt").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn tabs_keep_their_folder_and_cursor() {
+        let d = tree("tabs");
+        let mut app = open_t(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(60, 8, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        assert_eq!(ui.number("tabh"), 0.0, "one tab shows no bar");
+        ui.focus("files");
+        let ctrl = |ui: &mut Ui, k: Key, shift: bool| ui.dispatch(&Event::Key(k, Mods { ctrl: true, shift, ..Mods::default() }));
+        ctrl(&mut ui, Key::Char('t'), false);
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert_eq!((app.tabs.len(), app.tab, ui.number("tabh")), (2, 1, 1.0));
+        assert!(c.to_text().lines().nth(1).unwrap().contains(d.file_name().unwrap().to_str().unwrap()), "{}", c.to_text());
+        key(&mut ui, Key::Enter);
+        handle_all(&mut app, &mut ui);
+        let docs = d.join("docs").canonicalize().unwrap();
+        assert_eq!(app.dir, docs, "the second tab went into docs");
+        ctrl(&mut ui, Key::Tab, false);
+        handle_all(&mut app, &mut ui);
+        assert_eq!(app.tab, 0);
+        assert_eq!(app.dir, d.canonicalize().unwrap(), "the first tab is where it was");
+        ctrl(&mut ui, Key::Tab, false);
+        handle_all(&mut app, &mut ui);
+        assert_eq!(app.dir, docs);
+        ctrl(&mut ui, Key::BackTab, false);
+        handle_all(&mut app, &mut ui);
+        assert_eq!(app.tab, 0);
+        ctrl(&mut ui, Key::Char('w'), false);
+        handle_all(&mut app, &mut ui);
+        ui.render(&mut c);
+        assert_eq!((app.tabs.len(), ui.number("tabh")), (1, 0.0));
+        assert_eq!(app.dir, docs, "closing the first tab leaves the other one");
+        ctrl(&mut ui, Key::Char('w'), false);
+        handle_all(&mut app, &mut ui);
+        assert_eq!(app.tabs.len(), 1, "the last tab stays");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

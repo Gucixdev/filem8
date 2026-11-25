@@ -52,4 +52,7 @@ fn main() {
     shot(&mut ui, &mut app, &format!("{out}-pane-picture.png"));
     ui.dispatch(&Event::Key(Key::Char(','), Mods { ctrl: true, ..Mods::default() }));
     shot(&mut ui, &mut app, &format!("{out}-settings.png"));
+    ui.dispatch(&Event::Key(Key::Char(','), Mods { ctrl: true, ..Mods::default() }));
+    ui.dispatch(&Event::Key(Key::Char('t'), Mods { ctrl: true, ..Mods::default() }));
+    shot(&mut ui, &mut app, &format!("{out}-tabs.png"));
 }
