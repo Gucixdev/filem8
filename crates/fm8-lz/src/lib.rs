@@ -27,7 +27,7 @@ pub fn row(e: &Entry) -> String {
     format!("{mark}{}\t{size}", e.name)
 }
 
-const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n";
+const SPEC: &str = "col\n  pathbar id=bar bind=path dirs=1 size=1\n  pages bind=mode\n    list id=files\n    grid id=grid count=@count tile=16x8 prefix=t bind=cur\n  text id=status bind=status size=1\n  floatwin id=props bind=props title=Properties from=info w=44 h=10\n";
 
 /// The `Ui` of the folder view, with its keys. ctrl-g switches between the list and the thumbnail grid.
 pub fn ui() -> Ui {
@@ -35,8 +35,16 @@ pub fn ui() -> Ui {
     ui.hotkey("alt-up", "up");
     ui.hotkey("ctrl-l", "bar");
     ui.hotkey("ctrl-g", "grid");
+    ui.hotkey("ctrl-i", "info");
     ui.every(0.2, "poll");
     ui
+}
+
+/// The text of the properties window for one entry.
+pub fn describe(e: &Entry) -> String {
+    let kind = if e.is_dir { "folder".to_string() } else { format!("{:?}", e.class).to_lowercase() };
+    let size = if e.is_dir { format!("{} items", e.items) } else { format!("{} ({} bytes)", human_size(e.size), e.size) };
+    format!("{}\nkind: {kind}\nsize: {size}\npath: {}", e.name, e.path.display())
 }
 
 impl App {
@@ -129,6 +137,16 @@ impl App {
                 let grid = ui.number("mode") == 0.0;
                 ui.set("mode", if grid { 1.0 } else { 0.0 });
                 ui.focus(if grid { "grid" } else { "files" });
+            }
+            ("app", "info") => {
+                let i = if ui.number("mode") == 0.0 { ui.list_selected("files") } else { Some(ui.number("cur") as usize) };
+                match i.and_then(|i| self.entries.get(i)) {
+                    Some(en) => {
+                        ui.set_text("info", &describe(en));
+                        ui.set("props", 1.0);
+                    }
+                    None => ui.set("props", 0.0),
+                }
             }
             ("app", "bar") => {
                 ui.focus("bar");
@@ -245,6 +263,26 @@ mod tests {
         assert!(got, "the thumbnail of a.png never arrived");
         assert_eq!(thumbs::thumb(&d.join("a.png")).map(|t| (t.0, t.1)), Some((128, 85)));
         assert!(thumbs::thumb(&d.join("notes.txt")).is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ctrl_i_opens_the_properties_window_for_the_selected_entry() {
+        let d = tree("props");
+        let mut app = App::open(&d);
+        let mut ui = ui();
+        app.show(&mut ui);
+        let mut c = lazyui::canvas::Canvas::new(80, 20, lazyui::canvas::Caps::FULL);
+        ui.render(&mut c);
+        ui.focus("files");
+        key(&mut ui, Key::Down);
+        key(&mut ui, Key::Down);
+        ui.dispatch(&Event::Key(Key::Char('i'), Mods { ctrl: true, ..Mods::default() }));
+        handle_all(&mut app, &mut ui);
+        assert_eq!(ui.number("props"), 1.0);
+        assert!(ui.text_of("info").starts_with("notes.txt\nkind: text\nsize: 5 B"), "{}", ui.text_of("info"));
+        ui.render(&mut c);
+        assert!(c.to_text().contains("Properties"), "{}", c.to_text());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
